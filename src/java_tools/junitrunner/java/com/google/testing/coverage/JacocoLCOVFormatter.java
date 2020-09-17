@@ -117,6 +117,7 @@ public class JacocoLCOVFormatter {
             sourceToClassCoverage.get(fileName).put(clsCoverage.getName(), clsCoverage);
           }
           for (ISourceFileCoverage srcCoverage : pkgCoverage.getSourceFiles()) {
+            Systen.out.println("Ahoy there! Here is the source name I am lookin for: " + srcCoverage.getPackageName() + "/" + srcCoverage.getName());
             String sourceName =
                 getExecPathForEntryName(srcCoverage.getPackageName() + "/" + srcCoverage.getName());
             if (sourceName != null) {

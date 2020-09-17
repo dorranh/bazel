@@ -262,6 +262,8 @@ public class JacocoCoverageRunner {
       JarEntry jarEntry = jarFileEntries.nextElement();
       String jarEntryName = jarEntry.getName();
       if (jarEntryName.endsWith("-paths-for-coverage.txt")) {
+        // String test = "hello";
+        System.out.println("Found a paths file within Bazel");
         BufferedReader bufferedReader =
             new BufferedReader(new InputStreamReader(jarFile.getInputStream(jarEntry), UTF_8));
         String line;
