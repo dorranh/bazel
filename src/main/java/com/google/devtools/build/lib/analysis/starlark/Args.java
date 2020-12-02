@@ -56,8 +56,9 @@ public abstract class Args implements CommandLineArgsApi {
   }
 
   @Override
-  public boolean isHashable() {
-    return false; // even a frozen Args is not hashable
+  public void checkHashable() throws EvalException {
+    // Even a frozen Args is not hashable.
+    throw Starlark.errorf("unhashable type: '%s'", Starlark.type(this));
   }
 
   @Override
@@ -71,6 +72,9 @@ public abstract class Args implements CommandLineArgsApi {
       printer.append(Joiner.on(" ").join(build().arguments()));
     } catch (CommandLineExpansionException e) {
       printer.append("Cannot expand command line: " + e.getMessage());
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
+      printer.append("Interrupted while expanding command line: " + e.getMessage());
     }
   }
 
@@ -435,8 +439,7 @@ public abstract class Args implements CommandLineArgsApi {
     private void validateArgName(Object argName) throws EvalException {
       if (!(argName instanceof String)) {
         throw Starlark.errorf(
-            "expected value of type 'string' for arg name, got '%s'",
-            argName.getClass().getSimpleName());
+            "expected value of type 'string' for arg name, got '%s'", Starlark.type(argName));
       }
     }
 
@@ -444,7 +447,7 @@ public abstract class Args implements CommandLineArgsApi {
       if (!(values instanceof Sequence || values instanceof Depset)) {
         throw Starlark.errorf(
             "expected value of type 'sequence or depset' for values, got '%s'",
-            values.getClass().getSimpleName());
+            Starlark.type(values));
       }
     }
 

@@ -356,9 +356,15 @@ final class NodePrinter {
           break;
         }
 
-      case INTEGER_LITERAL:
+      case INT_LITERAL:
         {
-          buf.append(((IntegerLiteral) expr).getValue());
+          buf.append(((IntLiteral) expr).getValue());
+          break;
+        }
+
+      case FLOAT_LITERAL:
+        {
+          buf.append(((FloatLiteral) expr).getValue());
           break;
         }
 

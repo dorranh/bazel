@@ -35,6 +35,7 @@ import com.google.devtools.build.lib.analysis.configuredtargets.InputFileConfigu
 import com.google.devtools.build.lib.analysis.configuredtargets.OutputFileConfiguredTarget;
 import com.google.devtools.build.lib.analysis.configuredtargets.PackageGroupConfiguredTarget;
 import com.google.devtools.build.lib.analysis.configuredtargets.RuleConfiguredTarget;
+import com.google.devtools.build.lib.analysis.constraints.RuleContextConstraintSemantics;
 import com.google.devtools.build.lib.analysis.starlark.StarlarkRuleConfiguredTargetUtil;
 import com.google.devtools.build.lib.analysis.test.AnalysisFailure;
 import com.google.devtools.build.lib.analysis.test.AnalysisFailureInfo;
@@ -67,6 +68,7 @@ import com.google.devtools.build.lib.packages.Target;
 import com.google.devtools.build.lib.packages.semantics.BuildLanguageOptions;
 import com.google.devtools.build.lib.profiler.memory.CurrentRuleTracker;
 import com.google.devtools.build.lib.rules.cpp.DeniedImplicitOutputMarkerProvider;
+import com.google.devtools.build.lib.server.FailureDetails.FailAction.Code;
 import com.google.devtools.build.lib.skyframe.AspectValueKey;
 import com.google.devtools.build.lib.skyframe.ConfiguredTargetAndData;
 import com.google.devtools.build.lib.skyframe.ConfiguredTargetKey;
@@ -321,6 +323,12 @@ public final class ConfiguredTargetFactory {
                     prerequisiteMap.values()))
             .build();
 
+    ConfiguredTarget incompatibleTarget =
+        RuleContextConstraintSemantics.incompatibleConfiguredTarget(ruleContext, prerequisiteMap);
+    if (incompatibleTarget != null) {
+      return incompatibleTarget;
+    }
+
     List<NestedSet<AnalysisFailure>> analysisFailures = depAnalysisFailures(ruleContext);
     if (!analysisFailures.isEmpty()) {
       return erroredConfiguredTargetWithFailures(ruleContext, analysisFailures);
@@ -329,21 +337,27 @@ public final class ConfiguredTargetFactory {
       return erroredConfiguredTarget(ruleContext);
     }
 
-    MissingFragmentPolicy missingFragmentPolicy =
-        configurationFragmentPolicy.getMissingFragmentPolicy();
-
     try {
-      if (missingFragmentPolicy != MissingFragmentPolicy.IGNORE
-          && !configuration.hasAllFragments(
-              configurationFragmentPolicy.getRequiredConfigurationFragments())) {
-        if (missingFragmentPolicy == MissingFragmentPolicy.FAIL_ANALYSIS) {
-          ruleContext.ruleError(
-              missingFragmentError(
-                  ruleContext, configurationFragmentPolicy, configuration.checksum()));
-          return null;
+      Class<?> missingFragmentClass = null;
+      for (Class<?> fragmentClass :
+          configurationFragmentPolicy.getRequiredConfigurationFragments()) {
+        if (!configuration.hasFragment(fragmentClass.asSubclass(Fragment.class))) {
+          MissingFragmentPolicy missingFragmentPolicy =
+              configurationFragmentPolicy.getMissingFragmentPolicy(fragmentClass);
+          if (missingFragmentPolicy != MissingFragmentPolicy.IGNORE) {
+            if (missingFragmentPolicy == MissingFragmentPolicy.FAIL_ANALYSIS) {
+              ruleContext.ruleError(
+                  missingFragmentError(
+                      ruleContext, configurationFragmentPolicy, configuration.checksum()));
+              return null;
+            }
+            // Otherwise missingFragmentPolicy == MissingFragmentPolicy.CREATE_FAIL_ACTIONS:
+            missingFragmentClass = fragmentClass;
+          }
         }
-        // Otherwise missingFragmentPolicy == MissingFragmentPolicy.CREATE_FAIL_ACTIONS:
-        return createFailConfiguredTarget(ruleContext);
+      }
+      if (missingFragmentClass != null) {
+        return createFailConfiguredTargetForMissingFragmentClass(ruleContext, missingFragmentClass);
       }
       if (rule.getRuleClassObject().isStarlark()) {
         // TODO(bazel-team): maybe merge with RuleConfiguredTargetBuilder?
@@ -396,7 +410,7 @@ public final class ConfiguredTargetFactory {
 
   private ConfiguredTarget erroredConfiguredTargetWithFailures(
       RuleContext ruleContext, List<NestedSet<AnalysisFailure>> analysisFailures)
-      throws ActionConflictException {
+      throws ActionConflictException, InterruptedException {
     RuleConfiguredTargetBuilder builder = new RuleConfiguredTargetBuilder(ruleContext);
     builder.addNativeDeclaredProvider(AnalysisFailureInfo.forAnalysisFailureSets(analysisFailures));
     builder.addProvider(RunfilesProvider.class, RunfilesProvider.simple(Runfiles.EMPTY));
@@ -405,14 +419,14 @@ public final class ConfiguredTargetFactory {
 
   /**
    * Returns a {@link ConfiguredTarget} which indicates that an analysis error occurred in
-   * processing the target. In most cases, this returns null, which signals to callers that
-   * the target failed to build and thus the build should fail. However, if analysis failures
-   * are allowed in this build, this returns a stub {@link ConfiguredTarget} which contains
-   * information about the failure.
+   * processing the target. In most cases, this returns null, which signals to callers that the
+   * target failed to build and thus the build should fail. However, if analysis failures are
+   * allowed in this build, this returns a stub {@link ConfiguredTarget} which contains information
+   * about the failure.
    */
   @Nullable
   private ConfiguredTarget erroredConfiguredTarget(RuleContext ruleContext)
-      throws ActionConflictException {
+      throws ActionConflictException, InterruptedException {
     if (ruleContext.getConfiguration().allowAnalysisFailures()) {
       ImmutableList.Builder<AnalysisFailure> analysisFailures = ImmutableList.builder();
 
@@ -581,7 +595,7 @@ public final class ConfiguredTargetFactory {
     if (advertisedProviders.canHaveAnyProvider()) {
       return;
     }
-    for (Class<?> aClass : advertisedProviders.getNativeProviders()) {
+    for (Class<?> aClass : advertisedProviders.getBuiltinProviders()) {
       if (configuredAspect.getProvider(aClass.asSubclass(TransitiveInfoProvider.class)) == null) {
         eventHandler.handle(
             Event.error(
@@ -608,16 +622,25 @@ public final class ConfiguredTargetFactory {
 
   /**
    * A pseudo-implementation for configured targets that creates fail actions for all declared
-   * outputs, both implicit and explicit.
+   * outputs, both implicit and explicit, due to a missing fragment class.
    */
-  private static ConfiguredTarget createFailConfiguredTarget(RuleContext ruleContext)
-      throws RuleErrorException, ActionConflictException {
+  private static ConfiguredTarget createFailConfiguredTargetForMissingFragmentClass(
+      RuleContext ruleContext, Class<?> missingFragmentClass) throws InterruptedException {
     RuleConfiguredTargetBuilder builder = new RuleConfiguredTargetBuilder(ruleContext);
     if (!ruleContext.getOutputArtifacts().isEmpty()) {
-      ruleContext.registerAction(new FailAction(ruleContext.getActionOwner(),
-          ruleContext.getOutputArtifacts(), "Can't build this"));
+      ruleContext.registerAction(
+          new FailAction(
+              ruleContext.getActionOwner(),
+              ruleContext.getOutputArtifacts(),
+              "Missing fragment class: " + missingFragmentClass.getName(),
+              Code.FRAGMENT_CLASS_MISSING));
     }
     builder.add(RunfilesProvider.class, RunfilesProvider.simple(Runfiles.EMPTY));
-    return builder.build();
+    try {
+      return builder.build();
+    } catch (ActionConflictException e) {
+      throw new IllegalStateException(
+          "Can't have an action conflict with one action: " + ruleContext.getLabel(), e);
+    }
   }
 }

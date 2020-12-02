@@ -318,7 +318,7 @@ Package path elements may be specified in three formats:
   Once the profile data tree has been generated, the profile tree
   should be zipped up, and provided to the
   <code class='flag'>--fdo_optimize=<var>profile-zip</var></code>
-  Bazel option to enable the FDO optimized compilation.
+  Bazel option to enable the FDO-optimized compilation.
 
 </p>
 <p>
@@ -330,6 +330,7 @@ Package path elements may be specified in three formats:
   The options <code class='flag'>--fdo_instrument</code> and <code class='flag'>--fdo_optimize</code>
   cannot be used at the same time.
 </p>
+
 
 <h4 id='flag--fdo_optimize'><code class='flag'>--fdo_optimize <var>profile-zip</var></code></h4>
 <p>
@@ -1422,7 +1423,8 @@ either to the terminal, or to additional log files.
   The program should print zero or more key/value pairs to standard output, one entry on each line,
   then exit with zero (otherwise the build fails). The key names can be anything but they may only
   use upper case letters and underscores. The first space after the key name separates it from the
-  value. The value is the rest of the line (including additional whitespaces).
+  value. The value is the rest of the line (including additional whitespaces). Neither the key nor
+  the value may span multiple lines. Keys must not be duplicated.
 </p>
 <p>
   Bazel partitions the keys into two buckets: "stable" and "volatile". (The names "stable" and
@@ -1575,6 +1577,13 @@ echo "STABLE_USER_NAME $USER"
 </p>
 
 <h3 id='misc_build_options'>Miscellaneous</h3>
+
+<h4 id='flag--flag_alias'><code class='flag'>--flag_alias <var>alias_name=target_path</var></code></h4>
+<p>
+  A convenience flag used to bind longer Starlark build settings to a shorter name. For more
+  details, see the
+  <a href=https://docs.bazel.build/versions/master/skylark/config.html#using-build-setting-aliases">Starlark Configurations</a>.
+</p>
 
 <h4 id='flag--symlink_prefix'><code class='flag'>--symlink_prefix <var>string</var></code></h4>
 <p>
@@ -2609,9 +2618,9 @@ adb -s deadbeef install ...
     <li><code>--host_jvm_args=-DRULE_MEMORY_TRACKER=1</code></li>
   </ul>
   <p>
-    The java-agent is checked into bazel at
+    The java-agent is checked into Bazel at
     third_party/allocation_instrumenter/java-allocation-instrumenter-3.0.1.jar, so make
-    sure you adjust <code>$BAZEL</code> for where you keep your bazel repository.
+    sure you adjust <code>$BAZEL</code> for where you keep your Bazel repository.
 
     Do not forget to keep passing these options to Bazel for every command or the server will
     restart.
@@ -2646,32 +2655,9 @@ adb -s deadbeef install ...
   The following options are supported:
 </p>
 <ul>
-  <li><code id='flag--dump'>--dump=text</code> displays all gathered data in a
-  <a href='guide.html#dump-text-format'>human-readable format</a></li>
-  <li><code>--dump=raw</code> displays all gathered data in a
-  <a href='guide.html#dump-raw-format'>script-friendly format</a></li>
-  <li><code id='flag--html'>--html</code> generates an <a href='guide.html#dump-html-format'>HTML file</a> visualizing the
-  actions and rules executed in the build, as well as summary statistics for the build
-    <ul>
-      <li><code id='flag--html_details'>--html_details</code> adds more fine-grained
-      information on actions and rules to the HTML visualization</li>
-        <ul>
-          <li><code id='flag--html_histograms'>--html_histograms</code> adds histograms for Starlark
-          functions clicked in the statistics table. This will increase file size massively</li>
-          <li><code id='flag--nochart'>--nochart</code> hides the task chart from generated HTML
-          </li>
-        </ul>
-    </ul>
-  </li>
-  <li><code id='flag--combine'>--combine</code> combines multiple profile data files into a single
-  report. Does not generate HTML task charts</li>
-  <li><code id='flag--task_tree'>--task_tree</code> prints the tree of tasks matching the given
-  regular expression
-    <ul>
-      <li><code id='flag--task_tree_threshold'>--task_tree_threshold</code> skip tasks with duration
-      less than threshold, in milliseconds. Default is 50ms</li>
-    </ul>
-  </li>
+  <li><code id='flag--dump'>--dump</code> displays all gathered data in a
+  <a href='guide.html#dump-text-format'>human-readable format</a>. However,
+  this it does not support other formats yet.</li>
 </ul>
 
 <p>
@@ -2683,7 +2669,8 @@ adb -s deadbeef install ...
 <h3 id='canonicalize'><code>canonicalize-flags</code></h3>
 
 <p>
-  The <code>canonicalize-flags</code> command, which takes a list of options for
+  The <a href="https://docs.bazel.build/command-line-reference.html#canonicalize-flags-options">
+  <code>canonicalize-flags</code></a> command, which takes a list of options for
   a Bazel command and returns a list of options that has the same effect. The
   new list of options is canonical, i.e., two lists of options with the same
   effect are canonicalized to the same new list.
@@ -2695,8 +2682,17 @@ adb -s deadbeef install ...
 </p>
 <p>
   Note that a small number of options cannot be reordered, because Bazel cannot
-  ensure that the effect is identical.
+  ensure that the effect is identical. Also note that this command
+  <i>does not</i> expand flags from <code>--config</code>.
 </p>
+<p>
+  As an example:
+</p>
+<pre>
+  % bazel canonicalize-flags -- --config=any_name --test_tag_filters="-lint"
+  --config=any_name
+  --test_tag_filters=-lint
+</pre>
 
 <h3 id='startup_options'>Startup options</h3>
 

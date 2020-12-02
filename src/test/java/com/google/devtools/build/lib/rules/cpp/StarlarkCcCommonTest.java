@@ -14,6 +14,7 @@
 package com.google.devtools.build.lib.rules.cpp;
 
 import static com.google.common.truth.Truth.assertThat;
+import static com.google.common.truth.Truth8.assertThat;
 import static com.google.devtools.build.lib.actions.util.ActionsTestUtil.baseArtifactNames;
 import static org.junit.Assert.assertThrows;
 
@@ -70,7 +71,6 @@ import java.util.Map;
 import net.starlark.java.eval.EvalException;
 import net.starlark.java.eval.Sequence;
 import net.starlark.java.eval.Starlark;
-import net.starlark.java.eval.StarlarkList;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -1255,6 +1255,9 @@ public class StarlarkCcCommonTest extends BuildViewTestCase {
 
   @Test
   public void testCcLinkingContextOnWindows() throws Exception {
+    if (!AnalysisMock.get().isThisBazel()) {
+      return;
+    }
     AnalysisMock.get()
         .ccSupport()
         .setupCcToolchainConfig(
@@ -1267,7 +1270,9 @@ public class StarlarkCcCommonTest extends BuildViewTestCase {
     doTestCcLinkingContext(
         ImmutableList.of("a.a", "libdep2.a", "b.a", "c.a", "d.a", "libdep1.a"),
         ImmutableList.of("a.pic.a", "b.pic.a", "c.pic.a", "e.pic.a"),
-        ImmutableList.of("a.so", "libdep2.so", "b.so", "e.so", "libdep1.so"));
+        // The suffix of dynamic library is caculated based on repository name and package path
+        // to avoid conflicts with dynamic library from other packages.
+        ImmutableList.of("a.so", "libdep2_6b43f83676.so", "b.so", "e.so", "libdep1_6b43f83676.so"));
   }
 
   @Test
@@ -5829,7 +5834,7 @@ public class StarlarkCcCommonTest extends BuildViewTestCase {
 
     Object picObjects = fooInfoForPic.getValue("pic_objects");
     assertThat(picObjects).isNotEqualTo(Starlark.NONE);
-    assertThat((StarlarkList) picObjects).isEmpty();
+    assertThat((List) picObjects).isEmpty();
 
     // With PIC and the default compilation_mode which is fastbuild C++ rules only produce PIC
     // objects.
@@ -5845,7 +5850,7 @@ public class StarlarkCcCommonTest extends BuildViewTestCase {
 
     Object objects = fooInfoForNoPic.getValue("objects");
     assertThat(objects).isNotEqualTo(Starlark.NONE);
-    assertThat((StarlarkList) objects).isEmpty();
+    assertThat((List) objects).isEmpty();
   }
 
   @Test
@@ -5905,11 +5910,11 @@ public class StarlarkCcCommonTest extends BuildViewTestCase {
 
     Object picLtoBitcodeFiles = fooInfo.getValue("pic_lto_bitcode_files");
     assertThat(picLtoBitcodeFiles).isNotEqualTo(Starlark.NONE);
-    assertThat((StarlarkList) picLtoBitcodeFiles).isEmpty();
+    assertThat((List) picLtoBitcodeFiles).isEmpty();
 
     Object ltoBitcodeFiles = fooInfo.getValue("lto_bitcode_files");
     assertThat(ltoBitcodeFiles).isNotEqualTo(Starlark.NONE);
-    assertThat((StarlarkList) ltoBitcodeFiles).isEmpty();
+    assertThat((List) ltoBitcodeFiles).isEmpty();
   }
 
   private void scratchObjectsProvidingRule() throws IOException {
@@ -6555,5 +6560,330 @@ public class StarlarkCcCommonTest extends BuildViewTestCase {
     checkError(
         "//b:import_objects_no_pic_lib",
         "If you pass 'pic_objects' you must also pass a 'pic_static_library'");
+  }
+
+  private void setupDebugPackageProviderTest(String fission) throws Exception {
+    getAnalysisMock()
+        .ccSupport()
+        .setupCcToolchainConfig(
+            mockToolsConfig,
+            CcToolchainConfig.builder().withFeatures(CppRuleClasses.PER_OBJECT_DEBUG_INFO));
+    useConfiguration(fission);
+    scratch.file(
+        "a/rule.bzl",
+        "def _impl(ctx):",
+        "    out = ctx.actions.declare_file(ctx.label.name)",
+        "    ctx.actions.run_shell(",
+        "        inputs = [ctx.executable.cc_binary],",
+        "        tools = [],",
+        "        outputs = [out],",
+        "        command = 'cp %s %s' % (ctx.executable.cc_binary.path, out.path),",
+        "    )",
+        "    wrapped_defaultinfo = ctx.attr.cc_binary[DefaultInfo]",
+        "    runfiles = ctx.runfiles(files = [out])",
+        "    wrapped_default_runfiles = wrapped_defaultinfo.default_runfiles.files.to_list()",
+        "    if ctx.executable.cc_binary in wrapped_default_runfiles:",
+        "        wrapped_default_runfiles.remove(ctx.executable.cc_binary)",
+        "    result = [",
+        "        DefaultInfo(",
+        "            executable = out,",
+        "            files = depset([out]),",
+        "            runfiles = runfiles.merge(ctx.runfiles(files = wrapped_default_runfiles)),",
+        "        ),",
+        "    ]",
+        "    if ctx.file.stripped_file:",
+        "        wrapped_dbginfo = ctx.attr.cc_binary[DebugPackageInfo]",
+        "        result.append(",
+        "            DebugPackageInfo(",
+        "                target_label = ctx.label,",
+        "                stripped_file = ctx.file.stripped_file \\",
+        "                                if wrapped_dbginfo.stripped_file else None,",
+        "                unstripped_file = out,",
+        "                dwp_file = ctx.file.dwp_file if wrapped_dbginfo.dwp_file else None,",
+        "            ),",
+        "        )",
+        "    return result",
+        "wrapped_binary = rule(",
+        "    _impl,",
+        "    attrs = {",
+        "        'cc_binary': attr.label(",
+        "            allow_single_file = True,",
+        "            mandatory = True,",
+        "            executable = True,",
+        "            cfg = 'target',",
+        "        ),",
+        "        'stripped_file': attr.label(",
+        "            allow_single_file = True,",
+        "            default = None,",
+        "        ),",
+        "        'dwp_file': attr.label(",
+        "            allow_single_file = True,",
+        "            default = None,",
+        "        )",
+        "    },",
+        "    executable = True,",
+        ")");
+    scratch.file(
+        "a/BUILD",
+        "load(':rule.bzl', 'wrapped_binary')",
+        "wrapped_binary(name = 'w',",
+        "    cc_binary = ':native_binary',",
+        "    stripped_file = ':w.stripped',",
+        "    dwp_file = ':w.dwp',",
+        ")",
+        "wrapped_binary(name = 'w.stripped',",
+        "    cc_binary = ':native_binary.stripped'",
+        ")",
+        "wrapped_binary(name = 'w.dwp',",
+        "    cc_binary = ':native_binary.dwp'",
+        ")",
+        "cc_binary(name = 'native_binary',",
+        "    srcs = ['main.cc']",
+        ")");
+    scratch.file("a/main.cc", "int main() {}");
+  }
+
+  @Test
+  public void testDebugPackageProviderFissionDisabled() throws Exception {
+    setupDebugPackageProviderTest("--fission=no");
+    ConfiguredTarget target = getConfiguredTarget("//a:w");
+    assertNoEvents();
+    assertThat(target).isNotNull();
+    DebugPackageProvider debugPackageProvider = target.get(DebugPackageProvider.PROVIDER);
+    assertThat(debugPackageProvider.getStrippedArtifact().getFilename()).isEqualTo("w.stripped");
+    assertThat(debugPackageProvider.getUnstrippedArtifact().getFilename()).isEqualTo("w");
+    assertThat(debugPackageProvider.getDwpArtifact()).isNull();
+  }
+
+  @Test
+  public void testDebugPackageProviderFissionEnabled() throws Exception {
+    setupDebugPackageProviderTest("--fission=yes");
+    ConfiguredTarget target = getConfiguredTarget("//a:w");
+    assertNoEvents();
+    assertThat(target).isNotNull();
+    DebugPackageProvider debugPackageProvider = target.get(DebugPackageProvider.PROVIDER);
+    assertThat(debugPackageProvider.getStrippedArtifact().getFilename()).isEqualTo("w.stripped");
+    assertThat(debugPackageProvider.getUnstrippedArtifact().getFilename()).isEqualTo("w");
+    assertThat(debugPackageProvider.getDwpArtifact().getFilename()).isEqualTo("w.dwp");
+  }
+
+  @Test
+  public void testCcDebugContextDisabled() throws Exception {
+    scratch.file(
+        "b/BUILD",
+        "load('//my_rules:rule.bzl', 'cc_compile_rule')",
+        "cc_compile_rule(",
+        "  name='b_lib',",
+        "  srcs = ['b_lib.cc'],",
+        ")");
+    scratch.file("my_rules/BUILD");
+    scratch.file(
+        "my_rules/rule.bzl",
+        "def _impl(ctx):",
+        "  comp_context = cc_common.create_compilation_context()",
+        "  comp_outputs = cc_common.create_compilation_outputs()",
+        "  debug_info = cc_common.create_debug_context(comp_outputs)",
+        "  return [CcInfo(compilation_context = comp_context, debug_info = debug_info)]",
+        "cc_compile_rule = rule(",
+        "  implementation = _impl,",
+        "  attrs = {",
+        "    'srcs': attr.label_list(allow_files = ['.cc']),",
+        "  },",
+        ")");
+    AssertionError e = assertThrows(AssertionError.class, () -> getConfiguredTarget("//b:b_lib"));
+    assertThat(e).hasMessageThat().contains("Rule in 'my_rules' cannot use private API");
+  }
+
+  @Test
+  public void testCcDebugContext() throws Exception {
+    useConfiguration("--fission=yes");
+    scratch.file(
+        "b/BUILD",
+        "load('//bazel_internal/test_rules/cc:rule.bzl', 'cc_compile_rule')",
+        "cc_toolchain_alias(name='alias')",
+        "cc_compile_rule(",
+        "  name='b_lib',",
+        "  srcs = ['b_lib.cc'],",
+        ")");
+    scratch.file("bazel_internal/test_rules/cc/BUILD");
+    scratch.file(
+        "bazel_internal/test_rules/cc/rule.bzl",
+        "def _impl(ctx):",
+        "  toolchain = ctx.attr._cc_toolchain[cc_common.CcToolchainInfo]",
+        "  feature_configuration = cc_common.configure_features(",
+        "    ctx=ctx,",
+        "    cc_toolchain=toolchain,",
+        "    requested_features=ctx.features + ['per_object_debug_info'],",
+        "    unsupported_features=ctx.disabled_features)",
+        "  (comp_context, comp_outputs) = cc_common.compile(",
+        "    name = ctx.label.name,",
+        "    actions = ctx.actions,",
+        "    feature_configuration = feature_configuration,",
+        "    cc_toolchain = toolchain,",
+        "    srcs = ctx.files.srcs,",
+        "  )",
+        "  debug_info = cc_common.create_debug_context(comp_outputs)",
+        "  return [CcInfo(compilation_context = comp_context, debug_context = debug_info)]",
+        "cc_compile_rule = rule(",
+        "  implementation = _impl,",
+        "  attrs = {",
+        "    '_cc_toolchain': attr.label(default=Label('//b:alias')),",
+        "    'srcs': attr.label_list(allow_files = ['.cc']),",
+        "  },",
+        "  fragments = ['cpp'],",
+        ")");
+    ConfiguredTarget target = getConfiguredTarget("//b:b_lib");
+    assertThat(
+            target
+                .get(CcInfo.PROVIDER)
+                .getCcDebugInfoContext()
+                .getTransitiveDwoFiles()
+                .toList()
+                .stream()
+                .map(Artifact::getFilename))
+        .containsExactly("b_lib.dwo");
+    assertThat(
+            target.get(CcInfo.PROVIDER).getCcDebugInfoContext().getTransitivePicDwoFiles().toList())
+        .isEmpty();
+  }
+
+  @Test
+  public void testExpandedToolchainApiBlocked() throws Exception {
+    List<String> toolchainCalls =
+        ImmutableList.of(
+            "toolchain.as_files()",
+            "toolchain.ar_files()",
+            "toolchain.objcopy_files()",
+            "toolchain.tool_path(tool='ld')",
+            "toolchain.solib_dir()",
+            "toolchain.dynamic_runtime_solib_dir()",
+            "toolchain.linker_files()",
+            "toolchain.coverage_files()");
+    scratch.file(
+        "a/BUILD",
+        "load(':rule.bzl', 'crule')",
+        "cc_toolchain_alias(name='alias')",
+        "crule(name='r')");
+
+    for (String call : toolchainCalls) {
+      scratch.overwriteFile(
+          "a/rule.bzl",
+          "CruleInfo = provider()",
+          "def _impl(ctx):",
+          "  toolchain = ctx.attr._cc_toolchain[cc_common.CcToolchainInfo]",
+          "  " + call,
+          "  return [CruleInfo()]",
+          "crule = rule(",
+          "  _impl,",
+          "  attrs = { ",
+          "    '_cc_toolchain': attr.label(default=Label('//a:alias'))",
+          "  },",
+          "  fragments = ['cpp'],",
+          ");");
+      invalidatePackages();
+      AssertionError e = assertThrows(AssertionError.class, () -> getConfiguredTarget("//a:r"));
+      assertThat(e).hasMessageThat().contains("cannot use private API");
+    }
+  }
+
+  @Test
+  public void testExpandedModuleMapApiBlocked() throws Exception {
+    scratch.file(
+        "bazel_internal/test_rules/cc/BUILD",
+        "load(':module_map.bzl', 'module_map')",
+        "module_map(name='module_map', file = 'a_file.txt')");
+
+    scratch.file(
+        "bazel_internal/test_rules/cc/module_map.bzl",
+        "ModuleMapInfo = provider(fields=['module_map', 'file'])",
+        "def _impl(ctx):",
+        "  module_map = cc_common.create_module_map(file=ctx.file.file,",
+        "        umbrella_header=ctx.file.file, name='module')",
+        "  return [ModuleMapInfo(module_map=module_map, file=ctx.file.file)]",
+        "module_map = rule(",
+        "  _impl,",
+        "  attrs = { ",
+        "    'file': attr.label(allow_single_file=True)",
+        "  },",
+        "  fragments = ['cpp'],",
+        ");");
+
+    String compileCall =
+        "cc_common.compile(actions = ctx.actions, feature_configuration = feature_configuration,"
+            + " name = 'name', cc_toolchain = toolchain, ";
+    List<String> calls =
+        ImmutableList.of(
+            "cc_common.create_module_map(file=file, umbrella_header=file, name='name')",
+            "module_map.file()",
+            "module_map.umbrella_header()",
+            compileCall + " module_map = module_map)",
+            compileCall + " additional_module_maps = [module_map])");
+    scratch.overwriteFile(
+        "a/BUILD",
+        "load(':rule.bzl', 'crule')",
+        "cc_toolchain_alias(name='alias')",
+        "crule(name='r', deps=['//bazel_internal/test_rules/cc:module_map'])");
+
+    for (String call : calls) {
+      scratch.overwriteFile(
+          "a/rule.bzl",
+          "load('//bazel_internal/test_rules/cc:module_map.bzl', 'ModuleMapInfo')",
+          "CruleInfo = provider()",
+          "def _impl(ctx):",
+          "  toolchain = ctx.attr._cc_toolchain[cc_common.CcToolchainInfo]",
+          "  feature_configuration = cc_common.configure_features(",
+          "    ctx = ctx,",
+          "    cc_toolchain = toolchain,",
+          "  )",
+          "  module_map = ctx.attr.deps[0][ModuleMapInfo].module_map",
+          "  file = ctx.attr.deps[0][ModuleMapInfo].file",
+          "  " + call,
+          "  return [CruleInfo()]",
+          "crule = rule(",
+          "  _impl,",
+          "  attrs = { ",
+          "    'deps': attr.label_list(),",
+          "    '_cc_toolchain': attr.label(default=Label('//a:alias'))",
+          "  },",
+          "  fragments = ['cpp'],",
+          ");");
+      invalidatePackages();
+      AssertionError e = assertThrows(AssertionError.class, () -> getConfiguredTarget("//a:r"));
+      assertThat(e).hasMessageThat().contains("cannot use private API");
+    }
+  }
+
+  @Test
+  public void testExpandedCcCompilationContextApiBlocked() throws Exception {
+    scratch.file(
+        "b/BUILD",
+        "load('//my_rules:rule.bzl', 'method_rule', 'param_rule')",
+        "param_rule(",
+        "  name = 'p',",
+        ")",
+        "method_rule(",
+        "  name = 'm',",
+        ")");
+    scratch.file("my_rules/BUILD");
+    scratch.file(
+        "my_rules/rule.bzl",
+        "def _m_impl(ctx):",
+        "  comp_context = cc_common.create_compilation_context()",
+        "  comp_context.transitive_compilation_prerequisites()",
+        "  return [CcInfo(compilation_context = comp_context)]",
+        "def _p_impl(ctx):",
+        "  comp_context = cc_common.create_compilation_context()",
+        "  comp_context = cc_common.create_compilation_context(textual_hdrs = ['dummy.h'])",
+        "  return [CcInfo(compilation_context = comp_context)]",
+        "method_rule = rule(",
+        "  implementation = _m_impl,",
+        ")",
+        "param_rule = rule(",
+        "  implementation = _p_impl,",
+        ")");
+    AssertionError e = assertThrows(AssertionError.class, () -> getConfiguredTarget("//b:m"));
+    assertThat(e).hasMessageThat().contains("Rule in 'my_rules' cannot use private API");
+    e = assertThrows(AssertionError.class, () -> getConfiguredTarget("//b:p"));
+    assertThat(e).hasMessageThat().contains("Rule in 'my_rules' cannot use private API");
   }
 }

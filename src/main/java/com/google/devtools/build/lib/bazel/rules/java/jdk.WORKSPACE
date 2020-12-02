@@ -8,85 +8,6 @@ local_java_repository(
     java_home = DEFAULT_SYSTEM_JAVABASE,
 )
 
-bind(
-    name = "bootclasspath",
-    actual = "@local_jdk//:bootclasspath",
-)
-
-# TODO(cushon): migrate to extclasspath and delete
-bind(
-    name = "extdir",
-    actual = "@local_jdk//:extdir",
-)
-
-bind(
-    name = "extclasspath",
-    actual = "@local_jdk//:extdir",
-)
-
-bind(
-    name = "jni_header",
-    actual = "@local_jdk//:jni_header",
-)
-
-bind(
-    name = "jni_md_header-darwin",
-    actual = "@local_jdk//:jni_md_header-darwin",
-)
-
-bind(
-    name = "jni_md_header-linux",
-    actual = "@local_jdk//:jni_md_header-linux",
-)
-
-bind(
-    name = "jni_md_header-freebsd",
-    actual = "@local_jdk//:jni_md_header-freebsd",
-)
-
-bind(
-    name = "jni_md_header-openbsd",
-    actual = "@local_jdk//:jni_md_header-openbsd",
-)
-
-bind(
-    name = "java",
-    actual = "@local_jdk//:java",
-)
-
-bind(
-    name = "jar",
-    actual = "@local_jdk//:jar",
-)
-
-bind(
-    name = "javac",
-    actual = "@local_jdk//:javac",
-)
-
-bind(
-    name = "jre",
-    actual = "@local_jdk//:jre",
-)
-
-bind(
-    name = "jdk",
-    actual = "@local_jdk//:jdk",
-)
-
-# TODO: Remove these two rules after we've migrated. In order to properly look
-# up Jdks/Jres for cross-platform builds, the lookup needs to happen in the Jdk
-# repository. For now, use an alias rule that redirects to //external:{jre,jdk}.
-bind(
-    name = "jre-default",
-    actual = "@local_jdk//:jre",
-)
-
-bind(
-    name = "jdk-default",
-    actual = "@local_jdk//:jdk",
-)
-
 # OpenJDK distributions that should only be downloaded on demand (e.g. when
 # building a java_library or a genrule that uses java make variables).
 # This will allow us to stop bundling the full JDK with Bazel.
@@ -202,11 +123,61 @@ maybe(
 # This must be kept in sync with the top-level WORKSPACE file.
 maybe(
     http_archive,
-    name = "remote_java_tools_linux",
-    sha256 = "0be37f4227590ecb6bc929a6a7e427c65e6239363e4c3b28b1a211718b9636c9",
+    name = "remotejdk15_linux",
+    build_file = "@bazel_tools//tools/jdk:jdk.BUILD",
+    strip_prefix = "zulu15.27.17-ca-jdk15.0.0-linux_x64",
+    sha256 = "0a38f1138c15a4f243b75eb82f8ef40855afcc402e3c2a6de97ce8235011b1ad",
     urls = [
-        "https://mirror.bazel.build/bazel_java_tools/releases/javac11/v9.0/java_tools_javac11_linux-v9.0.zip",
-        "https://github.com/bazelbuild/java_tools/releases/download/javac11_v9.0/java_tools_javac11_linux-v9.0.zip",
+        "https://mirror.bazel.build/cdn.azul.com/zulu/bin/zulu15.27.17-ca-jdk15.0.0-linux_x64.tar.gz",
+        "https://cdn.azul.com/zulu/bin/zulu15.27.17-ca-jdk15.0.0-linux_x64.tar.gz"
+    ],
+)
+
+# This must be kept in sync with the top-level WORKSPACE file.
+maybe(
+    http_archive,
+    name = "remotejdk15_macos",
+    build_file = "@bazel_tools//tools/jdk:jdk.BUILD",
+    strip_prefix = "zulu15.27.17-ca-jdk15.0.0-macosx_x64",
+    sha256 = "f80b2e0512d9d8a92be24497334c974bfecc8c898fc215ce0e76594f00437482",
+    urls = [
+        "https://mirror.bazel.build/cdn.azul.com/zulu/bin/zulu15.27.17-ca-jdk15.0.0-macosx_x64.tar.gz",
+        "https://cdn.azul.com/zulu/bin/zulu15.27.17-ca-jdk15.0.0-macosx_x64.tar.gz",
+    ],
+)
+
+# This must be kept in sync with the top-level WORKSPACE file.
+maybe(
+    http_archive,
+    name = "remotejdk15_win",
+    build_file = "@bazel_tools//tools/jdk:jdk.BUILD",
+    strip_prefix = "zulu15.27.17-ca-jdk15.0.0-win_x64",
+    sha256 = "f535a530151e6c20de8a3078057e332b08887cb3ba1a4735717357e72765cad6",
+    urls = [
+        "https://mirror.bazel.build/cdn.azul.com/zulu/bin/zulu15.27.17-ca-jdk15.0.0-win_x64.zip",
+        "https://cdn.azul.com/zulu/bin/zulu15.27.17-ca-jdk15.0.0-win_x64.zip"
+    ],
+)
+
+# This must be kept in sync with the top-level WORKSPACE file.
+maybe(
+    http_archive,
+    name = "remote_java_tools",
+    sha256 = "09ecd438f1a10aa36bf0a6a2f24ead884ef7e8e8a46d086f8af6db33556b76a8",
+    urls = [
+        "https://mirror.bazel.build/bazel_java_tools/releases/java/v11.0/java_tools-v11.0.zip",
+        "https://github.com/bazelbuild/java_tools/releases/download/java_v11.0/java_tools-v11.0.zip",
+    ],
+)
+
+# This must be kept in sync with the top-level WORKSPACE file.
+maybe(
+    http_archive,
+    name = "remote_java_tools_linux",
+    sha256 = "b66d5b97b90cb20787cfa61565672b0538912d230f120a03f38020052f25c4bc",
+    urls = [
+        "https://mirror.bazel.build/bazel_java_tools/releases/java/v11.0/java_tools_linux-v11.0.zip",
+        "https://github.com/bazelbuild/java_tools/releases/download/java_v11.0/java_tools_linux-v11.0.zip",
     ],
 )
 
@@ -214,10 +185,10 @@ maybe(
 maybe(
     http_archive,
     name = "remote_java_tools_windows",
-    sha256 = "14b679e3bf6a7b4aec36dc33f15ad0027aef43f1bc92e1e2f5abf3a93c156bb5",
+    sha256 = "8a683275b0f24e011b56e27eb4d7e35919d774ae57ec3353d48606cfc81e4116",
     urls = [
-        "https://mirror.bazel.build/bazel_java_tools/releases/javac11/v9.0/java_tools_javac11_windows-v9.0.zip",
-        "https://github.com/bazelbuild/java_tools/releases/download/javac11_v9.0/java_tools_javac11_windows-v9.0.zip",
+        "https://mirror.bazel.build/bazel_java_tools/releases/java/v11.0/java_tools_windows-v11.0.zip",
+        "https://github.com/bazelbuild/java_tools/releases/download/java_v11.0/java_tools_windows-v11.0.zip",
     ],
 )
 
@@ -225,10 +196,10 @@ maybe(
 maybe(
     http_archive,
     name = "remote_java_tools_darwin",
-    sha256 = "567f5fe77e0c561b454930dea412899543849510f48f9c092dfcff8192b4086f",
+    sha256 = "39e3bb7e554e817de76a9b2cc9354b0c2363108dfcd56b360d3c35eadc8cddbd",
     urls = [
-        "https://mirror.bazel.build/bazel_java_tools/releases/javac11/v9.0/java_tools_javac11_darwin-v9.0.zip",
-        "https://github.com/bazelbuild/java_tools/releases/download/javac11_v9.0/java_tools_javac11_darwin-v9.0.zip",
+        "https://mirror.bazel.build/bazel_java_tools/releases/java/v11.0/java_tools_darwin-v11.0.zip",
+        "https://github.com/bazelbuild/java_tools/releases/download/java_v11.0/java_tools_darwin-v11.0.zip",
     ],
 )
 
@@ -247,11 +218,11 @@ maybe(
 maybe(
     http_archive,
     "rules_cc",
-    sha256 = "1d4dbbd1e1e9b57d40bb0ade51c9e882da7658d5bfbf22bbd15b68e7879d761f",
-    strip_prefix = "rules_cc-8bd6cd75d03c01bb82561a96d9c1f9f7157b13d0",
+    sha256 = "d0c573b94a6ef20ef6ff20154a23d0efcb409fb0e1ff0979cec318dfe42f0cdd",
+    strip_prefix = "rules_cc-b1c40e1de81913a3c40e5948f78719c28152486d",
     urls = [
-        "https://mirror.bazel.build/github.com/bazelbuild/rules_cc/archive/8bd6cd75d03c01bb82561a96d9c1f9f7157b13d0.zip",
-        "https://github.com/bazelbuild/rules_cc/archive/8bd6cd75d03c01bb82561a96d9c1f9f7157b13d0.zip",
+        "https://mirror.bazel.build/github.com/bazelbuild/rules_cc/archive/b1c40e1de81913a3c40e5948f78719c28152486d.zip",
+        "https://github.com/bazelbuild/rules_cc/archive/b1c40e1de81913a3c40e5948f78719c28152486d.zip",
     ],
 )
 
@@ -259,11 +230,11 @@ maybe(
 maybe(
     http_archive,
     "rules_proto",
-    sha256 = "602e7161d9195e50246177e7c55b2f39950a9cf7366f74ed5f22fd45750cd208",
-    strip_prefix = "rules_proto-97d8af4dc474595af3900dd85cb3a29ad28cc313",
+    sha256 = "8e7d59a5b12b233be5652e3d29f42fba01c7cbab09f6b3a8d0a57ed6d1e9a0da",
+    strip_prefix = "rules_proto-7e4afce6fe62dbff0a4a03450143146f9f2d7488",
     urls = [
-        "https://mirror.bazel.build/github.com/bazelbuild/rules_proto/archive/97d8af4dc474595af3900dd85cb3a29ad28cc313.tar.gz",
-        "https://github.com/bazelbuild/rules_proto/archive/97d8af4dc474595af3900dd85cb3a29ad28cc313.tar.gz",
+        "https://mirror.bazel.build/github.com/bazelbuild/rules_proto/archive/7e4afce6fe62dbff0a4a03450143146f9f2d7488.tar.gz",
+        "https://github.com/bazelbuild/rules_proto/archive/7e4afce6fe62dbff0a4a03450143146f9f2d7488.tar.gz",
     ],
 )
 

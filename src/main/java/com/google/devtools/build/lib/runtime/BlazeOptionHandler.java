@@ -217,7 +217,6 @@ public final class BlazeOptionHandler {
     // proper rcfiles. The --default_override options should be parsed with the --rc_source since
     // {@link #parseRcOptions} depends on the list populated by the {@link
     // ClientOptions#OptionOverrideConverter}.
-
     ImmutableList.Builder<String> defaultOverridesAndRcSources = new ImmutableList.Builder<>();
     ImmutableList.Builder<String> remainingCmdLine = new ImmutableList.Builder<>();
     partitionCommandLineArgs(cmdLineAfterCommand, defaultOverridesAndRcSources, remainingCmdLine);
@@ -346,7 +345,7 @@ public final class BlazeOptionHandler {
           FailureDetail.newBuilder()
               .setInterrupted(
                   FailureDetails.Interrupted.newBuilder()
-                      .setCode(FailureDetails.Interrupted.Code.OPTIONS_PARSING))
+                      .setCode(FailureDetails.Interrupted.Code.INTERRUPTED))
               .build());
     } catch (AbruptExitException e) {
       return e.getDetailedExitCode();

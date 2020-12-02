@@ -150,14 +150,13 @@ public class ConsistencyTest {
         "--incompatible_no_rule_outputs_param=" + rand.nextBoolean(),
         "--incompatible_objc_provider_remove_compile_info=" + rand.nextBoolean(),
         "--incompatible_run_shell_command_string=" + rand.nextBoolean(),
-        "--incompatible_string_replace_count=" + rand.nextBoolean(),
+        "--incompatible_struct_has_no_methods=" + rand.nextBoolean(),
         "--incompatible_visibility_private_attributes_at_definition=" + rand.nextBoolean(),
         "--incompatible_require_linker_input_cc_api=" + rand.nextBoolean(),
         "--incompatible_restrict_string_escapes=" + rand.nextBoolean(),
         "--incompatible_use_cc_configure_from_rules_cc=" + rand.nextBoolean(),
         "--internal_starlark_flag_test_canary=" + rand.nextBoolean(),
-        "--max_computation_steps=" + rand.nextLong(),
-        "--record_rule_instantiation_callstack=" + rand.nextBoolean());
+        "--max_computation_steps=" + rand.nextLong());
   }
 
   /**
@@ -207,7 +206,7 @@ public class ConsistencyTest {
         .setBool(
             BuildLanguageOptions.INCOMPATIBLE_OBJC_PROVIDER_REMOVE_COMPILE_INFO, rand.nextBoolean())
         .setBool(BuildLanguageOptions.INCOMPATIBLE_RUN_SHELL_COMMAND_STRING, rand.nextBoolean())
-        .setBool(StarlarkSemantics.INCOMPATIBLE_STRING_REPLACE_COUNT, rand.nextBoolean())
+        .setBool(BuildLanguageOptions.INCOMPATIBLE_STRUCT_HAS_NO_METHODS, rand.nextBoolean())
         .setBool(
             BuildLanguageOptions.INCOMPATIBLE_VISIBILITY_PRIVATE_ATTRIBUTES_AT_DEFINITION,
             rand.nextBoolean())
@@ -217,7 +216,6 @@ public class ConsistencyTest {
             BuildLanguageOptions.INCOMPATIBLE_USE_CC_CONFIGURE_FROM_RULES_CC, rand.nextBoolean())
         .setBool(StarlarkSemantics.PRINT_TEST_MARKER, rand.nextBoolean())
         .set(BuildLanguageOptions.MAX_COMPUTATION_STEPS, rand.nextLong())
-        .setBool(BuildLanguageOptions.RECORD_RULE_INSTANTIATION_CALLSTACK, rand.nextBoolean())
         .build();
   }
 

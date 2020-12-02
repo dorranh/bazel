@@ -100,6 +100,9 @@ langtools="$(rlocation io_bazel/src/test/shell/bazel/langtools.jar)"
 tools_dir="$(dirname $(rlocation io_bazel/tools/BUILD))"
 langtools_dir="$(dirname $(rlocation io_bazel/third_party/java/jdk/langtools/BUILD))"
 
+# Platforms
+default_host_platform="@local_config_platform//:host"
+
 # Sandbox tools
 process_wrapper="${BAZEL_RUNFILES}/src/main/tools/process-wrapper"
 linux_sandbox="${BAZEL_RUNFILES}/src/main/tools/linux-sandbox"
@@ -110,6 +113,9 @@ python_server="$(rlocation io_bazel/src/test/shell/bazel/testing_server.py)"
 
 # Third-party
 protoc_compiler="${BAZEL_RUNFILES}/src/test/shell/integration/protoc"
+
+# Skylib
+skylib_package="@bazel_skylib//"
 
 if [ -z ${RUNFILES_MANIFEST_ONLY+x} ]; then
   junit_jar="${BAZEL_RUNFILES}/third_party/junit/junit-*.jar"
@@ -283,18 +289,20 @@ EOF
         "openjdk14_darwin_archive"
         "openjdk14_linux_archive"
         "openjdk14_windows_archive"
+        "openjdk15_darwin_archive"
+        "openjdk15_linux_archive"
+        "openjdk15_windows_archive"
         "openjdk_linux_aarch64_minimal"
         "openjdk_linux_minimal"
         "openjdk_macos_minimal"
         "openjdk_win_minimal"
         "remote_coverage_tools_for_testing"
+        "remote_java_tools_for_testing"
         "remote_java_tools_darwin_for_testing"
-        "remote_java_tools_javac11_test_darwin"
-        "remote_java_tools_javac11_test_linux"
-        "remote_java_tools_javac11_test_windows"
-        "remote_java_tools_javac14_test_darwin"
-        "remote_java_tools_javac14_test_linux"
-        "remote_java_tools_javac14_test_windows"
+        "remote_java_tools_test"
+        "remote_java_tools_test_darwin"
+        "remote_java_tools_test_linux"
+        "remote_java_tools_test_windows"
         "remote_java_tools_linux_for_testing"
         "remote_java_tools_windows_for_testing"
         "remotejdk11_linux_for_testing"
@@ -306,6 +314,9 @@ EOF
         "remotejdk14_linux_for_testing"
         "remotejdk14_macos_for_testing"
         "remotejdk14_win_for_testing"
+        "remotejdk15_linux_for_testing"
+        "remotejdk15_macos_for_testing"
+        "remotejdk15_win_for_testing"
         "rules_cc"
         "rules_java"
         "rules_pkg"
@@ -339,11 +350,13 @@ function setup_android_sdk_support() {
   local android=$(dirname $android_jar)
   local platforms=$(dirname $android)
   ANDROID_SDK=$(dirname $platforms)
+
 cat >> WORKSPACE <<EOF
 android_sdk_repository(
     name = "androidsdk",
     path = "$ANDROID_SDK",
 )
+register_toolchains("//tools/android:all")
 EOF
 }
 
@@ -533,11 +546,11 @@ load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
 
 http_archive(
     name = "rules_proto",
-    sha256 = "602e7161d9195e50246177e7c55b2f39950a9cf7366f74ed5f22fd45750cd208",
-    strip_prefix = "rules_proto-97d8af4dc474595af3900dd85cb3a29ad28cc313",
+    sha256 = "8e7d59a5b12b233be5652e3d29f42fba01c7cbab09f6b3a8d0a57ed6d1e9a0da",
+    strip_prefix = "rules_proto-7e4afce6fe62dbff0a4a03450143146f9f2d7488",
     urls = [
-        "https://mirror.bazel.build/github.com/bazelbuild/rules_proto/archive/97d8af4dc474595af3900dd85cb3a29ad28cc313.tar.gz",
-        "https://github.com/bazelbuild/rules_proto/archive/97d8af4dc474595af3900dd85cb3a29ad28cc313.tar.gz",
+        "https://mirror.bazel.build/github.com/bazelbuild/rules_proto/archive/7e4afce6fe62dbff0a4a03450143146f9f2d7488.tar.gz",
+        "https://github.com/bazelbuild/rules_proto/archive/7e4afce6fe62dbff0a4a03450143146f9f2d7488.tar.gz",
     ],
 )
 EOF
@@ -584,7 +597,7 @@ workspaces=()
 # Set-up a new, clean workspace with only the tools installed.
 function create_new_workspace() {
   new_workspace_dir=${1:-$(mktemp -d ${TEST_TMPDIR}/workspace.XXXXXXXX)}
-  try_with_timeout rm -fr ${new_workspace_dir}
+  try_with_timeout rm -fr ${new_workspace_dir} > /dev/null 2>&1
   mkdir -p ${new_workspace_dir}
   workspaces+=(${new_workspace_dir})
   cd ${new_workspace_dir}

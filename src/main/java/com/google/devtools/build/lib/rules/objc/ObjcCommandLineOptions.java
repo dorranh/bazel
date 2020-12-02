@@ -238,17 +238,21 @@ public class ObjcCommandLineOptions extends FragmentOptions {
   public Label appleSdk;
 
   @Option(
-      name = "incompatible_objc_compile_info_migration",
+      name = "incompatible_avoid_hardcoded_objc_compilation_flags",
       defaultValue = "false",
-      documentationCategory = OptionDocumentationCategory.TOOLCHAIN,
-      effectTags = {OptionEffectTag.LOADING_AND_ANALYSIS, OptionEffectTag.CHANGES_INPUTS},
+      documentationCategory = OptionDocumentationCategory.UNDOCUMENTED,
+      effectTags = {
+        OptionEffectTag.AFFECTS_OUTPUTS,
+        OptionEffectTag.BAZEL_INTERNAL_CONFIGURATION,
+        OptionEffectTag.EXECUTION,
+        OptionEffectTag.ACTION_COMMAND_LINES,
+      },
       metadataTags = {
         OptionMetadataTag.INCOMPATIBLE_CHANGE,
         OptionMetadataTag.TRIGGERED_BY_ALL_INCOMPATIBLE_CHANGES,
       },
       help =
-          "If true, native rules can assume compile info has been migrated to CcInfo. See "
-              + "https://github.com/bazelbuild/bazel/issues/10854 for details and migration "
-              + "instructions")
-  public boolean incompatibleObjcCompileInfoMigration;
+          "Prevents Bazel from adding compiler options to Objective-C compilation actions. Options"
+              + " set in the crosstool are still applied.")
+  public boolean incompatibleAvoidHardcodedObjcCompilationFlags;
 }

@@ -25,7 +25,6 @@ import com.google.devtools.build.lib.shell.ShellUtils;
 import com.google.devtools.build.lib.vfs.PathFragment;
 import java.util.ArrayList;
 import java.util.List;
-import net.starlark.java.eval.StarlarkSemantics;
 
 /** Utility methods for use by Java-related parts of Bazel. */
 // TODO(bazel-team): Merge with JavaUtil.
@@ -55,12 +54,20 @@ public abstract class JavaHelper {
 
   /**
    * Control structure abstraction for safely extracting a prereq from the launcher attribute or
-   * --java_launcher flag.
+   * {@code --java_launcher} flag.
+   *
+   * <p>Returns {@code null} if either {@code create_executable} or {@code use_launcher} are
+   * disabled.
    */
   private static String filterLauncherForTarget(RuleContext ruleContext) {
     // create_executable=0 disables the launcher
     if (ruleContext.getRule().isAttrDefined("create_executable", Type.BOOLEAN)
         && !ruleContext.attributes().get("create_executable", Type.BOOLEAN)) {
+      return null;
+    }
+    // use_launcher=False disables the launcher
+    if (ruleContext.getRule().isAttrDefined("use_launcher", Type.BOOLEAN)
+        && !ruleContext.attributes().get("use_launcher", Type.BOOLEAN)) {
       return null;
     }
     // BUILD rule "launcher" attribute
@@ -108,35 +115,35 @@ public abstract class JavaHelper {
   }
 
   public static PathFragment getJavaResourcePath(
-      JavaSemantics semantics, RuleContext ruleContext, Artifact resource)
-      throws InterruptedException {
-    PathFragment rootRelativePath = resource.getRootRelativePath();
-    StarlarkSemantics starlarkSemantics =
-        ruleContext.getAnalysisEnvironment().getStarlarkSemantics();
-
-    if (!ruleContext.getLabel().getWorkspaceRoot(starlarkSemantics).isEmpty()) {
-      PathFragment workspace =
-          PathFragment.create(ruleContext.getLabel().getWorkspaceRoot(starlarkSemantics));
-      rootRelativePath = rootRelativePath.relativeTo(workspace);
+      JavaSemantics semantics, RuleContext ruleContext, Artifact resource) {
+    boolean siblingRepositoryLayout = ruleContext.getConfiguration().isSiblingRepositoryLayout();
+    PathFragment resourcePath = resource.getOutputDirRelativePath(siblingRepositoryLayout);
+    PathFragment repoExecPath =
+        ruleContext
+            .getLabel()
+            .getRepository()
+            .getExecPath(siblingRepositoryLayout);
+    if (!repoExecPath.isEmpty() && resourcePath.startsWith(repoExecPath)) {
+      resourcePath = resourcePath.relativeTo(repoExecPath);
     }
 
     if (!ruleContext.attributes().has("resource_strip_prefix", Type.STRING)
         || !ruleContext.attributes().isAttributeValueExplicitlySpecified("resource_strip_prefix")) {
-      return semantics.getDefaultJavaResourcePath(rootRelativePath);
+      return semantics.getDefaultJavaResourcePath(resourcePath);
     }
 
     PathFragment prefix =
         PathFragment.create(ruleContext.attributes().get("resource_strip_prefix", Type.STRING));
 
-    if (!rootRelativePath.startsWith(prefix)) {
+    if (!resourcePath.startsWith(prefix)) {
       ruleContext.attributeError(
           "resource_strip_prefix",
           String.format(
-              "Resource file '%s' is not under the specified prefix to strip", rootRelativePath));
-      return rootRelativePath;
+              "Resource file '%s' is not under the specified prefix to strip", resourcePath));
+      return resourcePath;
     }
 
-    return rootRelativePath.relativeTo(prefix);
+    return resourcePath.relativeTo(prefix);
   }
 
   /**

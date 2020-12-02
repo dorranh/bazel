@@ -49,7 +49,6 @@ import com.google.devtools.build.lib.events.EventCollector;
 import com.google.devtools.build.lib.events.EventKind;
 import com.google.devtools.build.lib.packages.Attribute.StarlarkComputedDefaultTemplate.CannotPrecomputeDefaultsException;
 import com.google.devtools.build.lib.packages.Attribute.ValidityPredicate;
-import com.google.devtools.build.lib.packages.ConfigurationFragmentPolicy.MissingFragmentPolicy;
 import com.google.devtools.build.lib.packages.RuleClass.Builder.RuleClassType;
 import com.google.devtools.build.lib.packages.RuleClass.Builder.ThirdPartyLicenseExistencePolicy;
 import com.google.devtools.build.lib.packages.RuleClass.ConfiguredTargetFactory;
@@ -69,6 +68,7 @@ import java.util.Map;
 import java.util.Set;
 import javax.annotation.Nullable;
 import net.starlark.java.eval.StarlarkFunction;
+import net.starlark.java.eval.StarlarkInt;
 import net.starlark.java.eval.StarlarkSemantics;
 import net.starlark.java.eval.StarlarkThread;
 import net.starlark.java.syntax.Location;
@@ -122,7 +122,6 @@ public class RuleClassTest extends PackageLoadingTestCase {
         AdvertisedProviderSet.EMPTY,
         null,
         ImmutableSet.<Class<?>>of(),
-        MissingFragmentPolicy.FAIL_ANALYSIS,
         true,
         attr("my-string-attr", STRING).mandatory().build(),
         attr("my-label-attr", LABEL)
@@ -131,7 +130,7 @@ public class RuleClassTest extends PackageLoadingTestCase {
             .value(Label.parseAbsolute("//default:label", ImmutableMap.of()))
             .build(),
         attr("my-labellist-attr", LABEL_LIST).mandatory().legacyAllowAnyFileType().build(),
-        attr("my-integer-attr", INTEGER).value(42).build(),
+        attr("my-integer-attr", INTEGER).value(StarlarkInt.of(42)).build(),
         attr("my-string-attr2", STRING).mandatory().value((String) null).build(),
         attr("my-stringlist-attr", STRING_LIST).build(),
         attr("my-sorted-stringlist-attr", STRING_LIST).orderIndependent().build());
@@ -157,7 +156,6 @@ public class RuleClassTest extends PackageLoadingTestCase {
         AdvertisedProviderSet.EMPTY,
         null,
         ImmutableSet.<Class<?>>of(),
-        MissingFragmentPolicy.FAIL_ANALYSIS,
         true,
         attributes.toArray(new Attribute[0]));
   }
@@ -197,7 +195,7 @@ public class RuleClassTest extends PackageLoadingTestCase {
     assertThat(ruleClassA.getAttribute(1).getDefaultValue(null))
         .isEqualTo(Label.parseAbsolute("//default:label", ImmutableMap.of()));
     assertThat(ruleClassA.getAttribute(2).getDefaultValue(null)).isEqualTo(Collections.emptyList());
-    assertThat(ruleClassA.getAttribute(3).getDefaultValue(null)).isEqualTo(42);
+    assertThat(ruleClassA.getAttribute(3).getDefaultValue(null)).isEqualTo(StarlarkInt.of(42));
     // default explicitly specified
     assertThat(ruleClassA.getAttribute(4).getDefaultValue(null)).isNull();
     assertThat(ruleClassA.getAttribute(5).getDefaultValue(null)).isEqualTo(Collections.emptyList());
@@ -262,7 +260,8 @@ public class RuleClassTest extends PackageLoadingTestCase {
         .newPackageBuilder(
             PackageIdentifier.createInMainRepo(TEST_PACKAGE_NAME),
             "TESTING",
-            StarlarkSemantics.DEFAULT)
+            StarlarkSemantics.DEFAULT,
+            /*repositoryMapping=*/ ImmutableMap.of())
         .setFilename(RootedPath.toRootedPath(root, testBuildfilePath));
   }
 
@@ -285,7 +284,6 @@ public class RuleClassTest extends PackageLoadingTestCase {
             AdvertisedProviderSet.EMPTY,
             null,
             ImmutableSet.<Class<?>>of(),
-            MissingFragmentPolicy.FAIL_ANALYSIS,
             true,
             attr("list1", LABEL_LIST).mandatory().legacyAllowAnyFileType().build(),
             attr("list2", LABEL_LIST).mandatory().legacyAllowAnyFileType().build(),
@@ -330,7 +328,6 @@ public class RuleClassTest extends PackageLoadingTestCase {
             AdvertisedProviderSet.EMPTY,
             null,
             ImmutableSet.<Class<?>>of(),
-            MissingFragmentPolicy.FAIL_ANALYSIS,
             true,
             attr("visibility", LABEL_LIST).legacyAllowAnyFileType().build());
     Map<String, Object> attributeValues = new HashMap<>();
@@ -391,7 +388,7 @@ public class RuleClassTest extends PackageLoadingTestCase {
     AttributeMap attributes = RawAttributeMapper.of(rule);
     assertThat(attributes.get("my-label-attr", BuildType.LABEL).toString())
         .isEqualTo("//default:label");
-    assertThat(attributes.get("my-integer-attr", Type.INTEGER).intValue()).isEqualTo(42);
+    assertThat(attributes.get("my-integer-attr", Type.INTEGER).toIntUnchecked()).isEqualTo(42);
     // missing attribute -> default chosen based on type
     assertThat(attributes.get("my-string-attr", Type.STRING)).isEmpty();
     assertThat(attributes.get("my-labellist-attr", BuildType.LABEL_LIST)).isEmpty();
@@ -427,7 +424,6 @@ public class RuleClassTest extends PackageLoadingTestCase {
             AdvertisedProviderSet.EMPTY,
             null,
             ImmutableSet.<Class<?>>of(),
-            MissingFragmentPolicy.FAIL_ANALYSIS,
             true,
             attr("name", STRING).build(),
             attr("outs", OUTPUT_LIST).build());
@@ -466,7 +462,6 @@ public class RuleClassTest extends PackageLoadingTestCase {
             AdvertisedProviderSet.EMPTY,
             null,
             ImmutableSet.<Class<?>>of(),
-            MissingFragmentPolicy.FAIL_ANALYSIS,
             true);
 
     Rule rule = createRule(ruleClass, "myRule", ImmutableMap.of(), testRuleLocation, NO_STACK);
@@ -500,7 +495,6 @@ public class RuleClassTest extends PackageLoadingTestCase {
         AdvertisedProviderSet.EMPTY,
         null,
         ImmutableSet.<Class<?>>of(),
-        MissingFragmentPolicy.FAIL_ANALYSIS,
         true,
         attr("condition", BOOLEAN).value(false).build(),
         attr("declared1", BOOLEAN).value(false).build(),
@@ -667,7 +661,6 @@ public class RuleClassTest extends PackageLoadingTestCase {
             AdvertisedProviderSet.EMPTY,
             null,
             ImmutableSet.<Class<?>>of(),
-            MissingFragmentPolicy.FAIL_ANALYSIS,
             true,
             attr("name", STRING).build(),
             attr("outs", OUTPUT_LIST).build());
@@ -708,7 +701,6 @@ public class RuleClassTest extends PackageLoadingTestCase {
             AdvertisedProviderSet.EMPTY,
             null,
             ImmutableSet.<Class<?>>of(),
-            MissingFragmentPolicy.FAIL_ANALYSIS,
             true,
             attr("a", STRING_LIST).mandatory().build(),
             attr("b", STRING_LIST).mandatory().build(),
@@ -863,7 +855,6 @@ public class RuleClassTest extends PackageLoadingTestCase {
       AdvertisedProviderSet advertisedProviders,
       @Nullable StarlarkFunction configuredTargetFunction,
       Set<Class<?>> allowedConfigurationFragments,
-      MissingFragmentPolicy missingFragmentPolicy,
       boolean supportsConstraintChecking,
       Attribute... attributes) {
     return new RuleClass(
@@ -895,7 +886,6 @@ public class RuleClassTest extends PackageLoadingTestCase {
         /*ruleDefinitionEnvironmentDigest=*/ null,
         new ConfigurationFragmentPolicy.Builder()
             .requiresConfigurationFragments(allowedConfigurationFragments)
-            .setMissingFragmentPolicy(missingFragmentPolicy)
             .build(),
         supportsConstraintChecking,
         ThirdPartyLicenseExistencePolicy.USER_CONTROLLABLE,
@@ -926,7 +916,6 @@ public class RuleClassTest extends PackageLoadingTestCase {
         AdvertisedProviderSet.EMPTY,
         null,
         ImmutableSet.<Class<?>>of(DummyFragment.class),
-        MissingFragmentPolicy.FAIL_ANALYSIS,
         true,
         attr("attr", STRING).build());
   }

@@ -13,6 +13,7 @@
 // limitations under the License.
 package com.google.devtools.build.lib.rules.java;
 
+import static com.google.devtools.build.lib.rules.cpp.CppRuleClasses.JAVA_LAUNCHER_LINK;
 import static com.google.devtools.build.lib.rules.cpp.CppRuleClasses.STATIC_LINKING_MODE;
 import static com.google.devtools.build.lib.rules.java.DeployArchiveBuilder.Compression.COMPRESSED;
 
@@ -74,7 +75,6 @@ public class JavaBinary implements RuleConfiguredTargetFactory {
   @Override
   public ConfiguredTarget create(RuleContext ruleContext)
       throws InterruptedException, RuleErrorException, ActionConflictException {
-    JavaCommon.checkRuleLoadedThroughMacro(ruleContext);
     final JavaCommon common = new JavaCommon(ruleContext, semantics);
     DeployArchiveBuilder deployArchiveBuilder = new DeployArchiveBuilder(semantics, ruleContext);
     Runfiles.Builder runfilesBuilder =
@@ -102,6 +102,11 @@ public class JavaBinary implements RuleConfiguredTargetFactory {
       if (launcherAttribute != null && !JavaHelper.isJdkLauncher(ruleContext, launcherAttribute)) {
         ruleContext.ruleError("launcher specified but create_executable is false");
       }
+    }
+
+    if (!ruleContext.attributes().get("use_launcher", Type.BOOLEAN)
+        && ruleContext.attributes().isAttributeValueExplicitlySpecified("launcher")) {
+      ruleContext.ruleError("launcher specified but use_launcher is false");
     }
 
     semantics.checkRule(ruleContext, common);
@@ -147,6 +152,7 @@ public class JavaBinary implements RuleConfiguredTargetFactory {
               /* requestedFeatures= */ ImmutableSet.<String>builder()
                   .addAll(ruleContext.getFeatures())
                   .add(STATIC_LINKING_MODE)
+                  .add(JAVA_LAUNCHER_LINK)
                   .build(),
               /* unsupportedFeatures= */ ruleContext.getDisabledFeatures(),
               ccToolchain,
@@ -481,8 +487,6 @@ public class JavaBinary implements RuleConfiguredTargetFactory {
     return builder
         .setFilesToBuild(filesToBuild)
         .addNativeDeclaredProvider(javaInfo)
-        .addStarlarkTransitiveInfo(
-            JavaStarlarkApiProvider.NAME, JavaStarlarkApiProvider.fromRuleContext())
         .add(RunfilesProvider.class, runfilesProvider)
         // The executable to run (below) may be different from the executable for runfiles (the one
         // we create the runfiles support object with). On Linux they are the same (it's the same
@@ -522,7 +526,7 @@ public class JavaBinary implements RuleConfiguredTargetFactory {
     Artifact jsa = ruleContext.getImplicitOutputArtifact(JavaSemantics.SHARED_ARCHIVE_ARTIFACT);
     Artifact merged =
         ruleContext.getDerivedArtifact(
-            jsa.getRootRelativePath()
+            jsa.getOutputDirRelativePath(ruleContext.getConfiguration().isSiblingRepositoryLayout())
                 .replaceName(
                     FileSystemUtils.removeExtension(jsa.getRootRelativePath().getBaseName())
                         + "-merged.jar"),

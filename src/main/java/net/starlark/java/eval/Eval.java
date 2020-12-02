@@ -16,6 +16,7 @@ package net.starlark.java.eval;
 
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Iterables;
+import java.math.BigInteger;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -33,12 +34,13 @@ import net.starlark.java.syntax.DictExpression;
 import net.starlark.java.syntax.DotExpression;
 import net.starlark.java.syntax.Expression;
 import net.starlark.java.syntax.ExpressionStatement;
+import net.starlark.java.syntax.FloatLiteral;
 import net.starlark.java.syntax.FlowStatement;
 import net.starlark.java.syntax.ForStatement;
 import net.starlark.java.syntax.Identifier;
 import net.starlark.java.syntax.IfStatement;
 import net.starlark.java.syntax.IndexExpression;
-import net.starlark.java.syntax.IntegerLiteral;
+import net.starlark.java.syntax.IntLiteral;
 import net.starlark.java.syntax.ListExpression;
 import net.starlark.java.syntax.LoadStatement;
 import net.starlark.java.syntax.Location;
@@ -88,9 +90,8 @@ final class Eval {
         if (stmt instanceof AssignmentStatement) {
           AssignmentStatement assign = (AssignmentStatement) stmt;
           for (Identifier id : Identifier.boundIdentifiers(assign.getLHS())) {
-            String name = id.getName();
-            Object value = fn(fr).getModule().getGlobal(name);
-            fr.thread.postAssignHook.assign(name, value);
+            Object value = fn(fr).getGlobal(id.getBinding().getIndex());
+            fr.thread.postAssignHook.assign(id.getName(), value);
           }
         }
       }
@@ -174,10 +175,13 @@ final class Eval {
       defaults = EMPTY;
     }
 
+    // Nested functions use the same globalIndex as their enclosing function,
+    // since both were compiled from the same Program.
+    StarlarkFunction fn = fn(fr);
     assignIdentifier(
         fr,
         node.getIdentifier(),
-        new StarlarkFunction(rfn, Tuple.wrap(defaults), fn(fr).getModule()));
+        new StarlarkFunction(rfn, Tuple.wrap(defaults), fn.getModule(), fn.globalIndex));
   }
 
   private static TokenKind execIf(StarlarkThread.Frame fr, IfStatement node)
@@ -229,7 +233,7 @@ final class Eval {
       // simply assign(binding.getLocalName(), value).
       // Currently, we update the module but not module.exportedGlobals;
       // changing it to fr.locals.put breaks a test. TODO(adonovan): find out why.
-      fn(fr).getModule().setGlobal(binding.getLocalName().getName(), value);
+      fn(fr).setGlobal(binding.getLocalName().getBinding().getIndex(), value);
     }
   }
 
@@ -300,6 +304,17 @@ final class Eval {
       ListExpression list = (ListExpression) lhs;
       assignSequence(fr, list.getElements(), value);
 
+    } else if (lhs instanceof DotExpression) {
+      // x.f = ...
+      DotExpression dot = (DotExpression) lhs;
+      Object object = eval(fr, dot.getObject());
+      String field = dot.getField().getName();
+      try {
+        EvalUtils.setField(object, field, value);
+      } catch (EvalException ex) {
+        fr.setErrorLocation(dot.getDotLocation());
+        throw ex;
+      }
     } else {
       // Not possible for resolved ASTs.
       throw Starlark.errorf("cannot assign to '%s'", lhs);
@@ -309,38 +324,19 @@ final class Eval {
   private static void assignIdentifier(StarlarkThread.Frame fr, Identifier id, Object value)
       throws EvalException {
     Resolver.Binding bind = id.getBinding();
-    // Legacy hack for incomplete identifier resolution.
-    // In a <toplevel> function, assignments to unresolved identifiers
-    // update the module, except for load statements and comprehensions,
-    // which should both be file-local.
-    // Load statements don't yet use assignIdentifier,
-    // so we need consider only comprehensions.
-    // In effect, we do the missing resolution using fr.compcount.
-    Resolver.Scope scope;
-    if (bind == null) {
-      scope =
-          fn(fr).isToplevel() && fr.compcount == 0
-              ? Resolver.Scope.GLOBAL //
-              : Resolver.Scope.LOCAL;
-    } else {
-      scope = bind.getScope();
-    }
-
-    String name = id.getName();
-    switch (scope) {
+    switch (bind.getScope()) {
       case LOCAL:
-        fr.locals.put(name, value);
+        fr.locals[bind.getIndex()] = value;
         break;
       case GLOBAL:
         // Updates a module binding and sets its 'exported' flag.
         // (Only load bindings are not exported.
         // But exportedGlobals does at run time what should be done in the resolver.)
-        Module module = fn(fr).getModule();
-        module.setGlobal(name, value);
-        module.exportedGlobals.add(name);
+        fn(fr).setGlobal(bind.getIndex(), value);
+        fn(fr).getModule().exportedGlobals.add(id.getName());
         break;
       default:
-        throw new IllegalStateException(scope.toString());
+        throw new IllegalStateException(bind.getScope().toString());
     }
   }
 
@@ -354,11 +350,12 @@ final class Eval {
     // assignments fail when the left side aliases the right,
     // which is a tricky case in Python assignment semantics.
     int nrhs = Starlark.len(x);
-    if (nrhs < 0) {
-      throw Starlark.errorf("got '%s' in sequence assignment", Starlark.type(x));
-    }
-    Iterable<?> rhs = Starlark.toIterable(x); // fails if x is a string
     int nlhs = lhs.size();
+    if (nrhs < 0 || x instanceof String) { // strings are not iterable
+      throw Starlark.errorf(
+          "got '%s' in sequence assignment (want %d-element sequence)", Starlark.type(x), nlhs);
+    }
+    Iterable<?> rhs = Starlark.toIterable(x);
     if (nlhs != nrhs) {
       throw Starlark.errorf(
           "too %s values to unpack (got %d, want %d)", nrhs < nlhs ? "few" : "many", nrhs, nlhs);
@@ -448,8 +445,20 @@ final class Eval {
         return evalIdentifier(fr, (Identifier) expr);
       case INDEX:
         return evalIndex(fr, (IndexExpression) expr);
-      case INTEGER_LITERAL:
-        return ((IntegerLiteral) expr).getValue();
+      case INT_LITERAL:
+        // TODO(adonovan): opt: avoid allocation by saving
+        // the StarlarkInt in the IntLiteral (a temporary hack
+        // until we use a compiled representation).
+        Number n = ((IntLiteral) expr).getValue();
+        if (n instanceof Integer) {
+          return StarlarkInt.of((Integer) n);
+        } else if (n instanceof Long) {
+          return StarlarkInt.of((Long) n);
+        } else {
+          return StarlarkInt.of((BigInteger) n);
+        }
+      case FLOAT_LITERAL:
+        return StarlarkFloat.of(((FloatLiteral) expr).getValue());
       case LIST_EXPR:
         return evalList(fr, (ListExpression) expr);
       case SLICE:
@@ -497,14 +506,14 @@ final class Eval {
       Object v = eval(fr, entry.getValue());
       int before = dict.size();
       try {
-        dict.put(k, v, (Location) null);
+        dict.putEntry(k, v);
       } catch (EvalException ex) {
         fr.setErrorLocation(entry.getColonLocation());
         throw ex;
       }
       if (dict.size() == before) {
         fr.setErrorLocation(entry.getColonLocation());
-        throw Starlark.errorf("Duplicated key %s when creating dictionary", Starlark.repr(k));
+        throw Starlark.errorf("dictionary expression has duplicate key: %s", Starlark.repr(k));
       }
     }
     return dict;
@@ -622,52 +631,28 @@ final class Eval {
 
   private static Object evalIdentifier(StarlarkThread.Frame fr, Identifier id)
       throws EvalException, InterruptedException {
-    String name = id.getName();
     Resolver.Binding bind = id.getBinding();
-    if (bind == null) {
-      // Legacy behavior, to be removed.
-      Object result = fr.locals.get(name);
-      if (result != null) {
-        return result;
-      }
-      result = fn(fr).getModule().get(name);
-      if (result != null) {
-        return result;
-      }
-
-      // Assuming resolution was successfully applied before execution
-      // (which is not yet true for copybara, but will be soon),
-      // then the identifier must have been resolved but the
-      // resolution was not annotated onto the syntax tree---because
-      // it's a BUILD file that may share trees with the prelude.
-      // So this error does not mean "undefined variable" (morally a
-      // static error), but "variable was (dynamically) referenced
-      // before being bound", as in 'print(x); x=1'.
-      fr.setErrorLocation(id.getStartLocation());
-      throw Starlark.errorf("variable '%s' is referenced before assignment", name);
-    }
-
     Object result;
     switch (bind.getScope()) {
       case LOCAL:
-        result = fr.locals.get(name);
+        result = fr.locals[bind.getIndex()];
         break;
       case GLOBAL:
-        result = fn(fr).getModule().getGlobal(name);
+        result = fn(fr).getGlobal(bind.getIndex());
         break;
       case PREDECLARED:
-        // TODO(adonovan): call getPredeclared
-        result = fn(fr).getModule().get(name);
+        result = fn(fr).getModule().getPredeclared(id.getName());
+        break;
+      case UNIVERSAL:
+        result = Starlark.UNIVERSE.get(id.getName());
         break;
       default:
         throw new IllegalStateException(bind.toString());
     }
     if (result == null) {
-      // Since Scope was set, we know that the local/global variable is defined,
-      // but its assignment was not yet executed.
       fr.setErrorLocation(id.getStartLocation());
       throw Starlark.errorf(
-          "%s variable '%s' is referenced before assignment.", bind.getScope(), name);
+          "%s variable '%s' is referenced before assignment.", bind.getScope(), id.getName());
     }
     return result;
   }
@@ -722,24 +707,8 @@ final class Eval {
   private static Object evalComprehension(StarlarkThread.Frame fr, Comprehension comp)
       throws EvalException, InterruptedException {
     final Dict<Object, Object> dict = comp.isDict() ? Dict.of(fr.thread.mutability()) : null;
-    final ArrayList<Object> list = comp.isDict() ? null : new ArrayList<>();
-
-    // Save previous value (if any) of local variables bound in a 'for' clause
-    // so we can restore them later.
-    // TODO(adonovan): throw all this away when we implement flat environments.
-    List<Object> saved = new ArrayList<>(); // alternating keys and values
-    for (Comprehension.Clause clause : comp.getClauses()) {
-      if (clause instanceof Comprehension.For) {
-        for (Identifier ident :
-            Identifier.boundIdentifiers(((Comprehension.For) clause).getVars())) {
-          String name = ident.getName();
-          Object value = fr.locals.get(ident.getName()); // may be null
-          saved.add(name);
-          saved.add(value);
-        }
-      }
-    }
-    fr.compcount++;
+    final StarlarkList<Object> list =
+        comp.isDict() ? null : StarlarkList.newList(fr.thread.mutability());
 
     // The Lambda class serves as a recursive lambda closure.
     class Lambda {
@@ -755,10 +724,10 @@ final class Eval {
             Comprehension.For forClause = (Comprehension.For) clause;
 
             Object iterable = eval(fr, forClause.getIterable());
-            Iterable<?> listValue = Starlark.toIterable(iterable);
+            Iterable<?> seq = Starlark.toIterable(iterable);
             EvalUtils.addIterator(iterable);
             try {
-              for (Object elem : listValue) {
+              for (Object elem : seq) {
                 assign(fr, forClause.getVars(), elem);
                 execClauses(index + 1);
               }
@@ -783,34 +752,21 @@ final class Eval {
           DictExpression.Entry body = (DictExpression.Entry) comp.getBody();
           Object k = eval(fr, body.getKey());
           try {
-            EvalUtils.checkHashable(k);
+            Starlark.checkHashable(k);
             Object v = eval(fr, body.getValue());
-            dict.put(k, v, (Location) null);
+            dict.putEntry(k, v);
           } catch (EvalException ex) {
             fr.setErrorLocation(body.getColonLocation());
             throw ex;
           }
         } else {
-          list.add(eval(fr, ((Expression) comp.getBody())));
+          list.addElement(eval(fr, ((Expression) comp.getBody())));
         }
       }
     }
     new Lambda().execClauses(0);
-    fr.compcount--;
 
-    // Restore outer scope variables.
-    // This loop implicitly undefines comprehension variables.
-    for (int i = 0; i != saved.size(); ) {
-      String name = (String) saved.get(i++);
-      Object value = saved.get(i++);
-      if (value != null) {
-        fr.locals.put(name, value);
-      } else {
-        fr.locals.remove(name);
-      }
-    }
-
-    return comp.isDict() ? dict : StarlarkList.copyOf(fr.thread.mutability(), list);
+    return comp.isDict() ? dict : list;
   }
 
   private static final Object[] EMPTY = {};

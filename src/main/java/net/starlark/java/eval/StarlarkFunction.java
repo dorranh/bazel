@@ -19,6 +19,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import javax.annotation.Nullable;
+import net.starlark.java.annot.StarlarkBuiltin;
 import net.starlark.java.spelling.SpellChecker;
 import net.starlark.java.syntax.Expression;
 import net.starlark.java.syntax.ExpressionStatement;
@@ -28,16 +29,33 @@ import net.starlark.java.syntax.Statement;
 import net.starlark.java.syntax.StringLiteral;
 
 /** A StarlarkFunction is a function value created by a Starlark {@code def} statement. */
+@StarlarkBuiltin(
+    name = "function",
+    category = "core",
+    doc = "The type of functions declared in Starlark.")
 public final class StarlarkFunction implements StarlarkCallable {
 
-  private final Resolver.Function rfn;
+  final Resolver.Function rfn;
+  final int[] globalIndex; // index in Module.globals of ith Program global (binding index)
   private final Module module; // a function closes over its defining module
-  private final Tuple<Object> defaultValues;
+  private final Tuple defaultValues;
 
-  StarlarkFunction(Resolver.Function rfn, Tuple<Object> defaultValues, Module module) {
+  StarlarkFunction(Resolver.Function rfn, Tuple defaultValues, Module module, int[] globalIndex) {
     this.rfn = rfn;
+    this.globalIndex = globalIndex;
     this.module = module;
     this.defaultValues = defaultValues;
+  }
+
+  // Sets a global variable, given its index in this function's compiled Program.
+  void setGlobal(int progIndex, Object value) {
+    module.setGlobalByIndex(globalIndex[progIndex], value);
+  }
+
+  // Gets the value of a global variable, given its index in this function's compiled Program.
+  @Nullable
+  Object getGlobal(int progIndex) {
+    return module.getGlobalByIndex(globalIndex[progIndex]);
   }
 
   boolean isToplevel() {
@@ -138,7 +156,7 @@ public final class StarlarkFunction implements StarlarkCallable {
     if (thread.mutability().isFrozen()) {
       throw Starlark.errorf("Trying to call in frozen environment");
     }
-    if (thread.isRecursiveCall(this)) {
+    if (!thread.isRecursionAllowed() && thread.isRecursiveCall(this)) {
       throw Starlark.errorf("function '%s' called recursively", getName());
     }
 
@@ -147,11 +165,8 @@ public final class StarlarkFunction implements StarlarkCallable {
     Object[] arguments = processArgs(thread.mutability(), positional, named);
 
     StarlarkThread.Frame fr = thread.frame(0);
-    ImmutableList<String> names = rfn.getParameterNames();
-    for (int i = 0; i < names.size(); ++i) {
-      fr.locals.put(names.get(i), arguments[i]);
-    }
-
+    fr.locals = new Object[rfn.getLocals().size()];
+    System.arraycopy(arguments, 0, fr.locals, 0, rfn.getParameterNames().size());
     return Eval.execFunctionBody(fr, rfn.getBody());
   }
 
@@ -256,7 +271,7 @@ public final class StarlarkFunction implements StarlarkCallable {
       } else if (kwargs != null) {
         // residual keyword argument
         int sz = kwargs.size();
-        kwargs.put(keyword, value, null);
+        kwargs.putEntry(keyword, value);
         if (kwargs.size() == sz) {
           throw Starlark.errorf(
               "%s() got multiple values for keyword argument '%s'", getName(), keyword);

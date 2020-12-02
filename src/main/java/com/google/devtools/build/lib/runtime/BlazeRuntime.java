@@ -39,6 +39,8 @@ import com.google.devtools.build.lib.analysis.test.CoverageReportActionFactory;
 import com.google.devtools.build.lib.bazel.repository.downloader.Downloader;
 import com.google.devtools.build.lib.bugreport.BugReport;
 import com.google.devtools.build.lib.bugreport.BugReporter;
+import com.google.devtools.build.lib.bugreport.Crash;
+import com.google.devtools.build.lib.bugreport.CrashContext;
 import com.google.devtools.build.lib.buildeventstream.BuildEvent.LocalFile.LocalFileType;
 import com.google.devtools.build.lib.buildeventstream.BuildEventArtifactUploader;
 import com.google.devtools.build.lib.buildeventstream.BuildEventArtifactUploader.UploadContext;
@@ -50,6 +52,7 @@ import com.google.devtools.build.lib.events.Event;
 import com.google.devtools.build.lib.events.ExtendedEventHandler;
 import com.google.devtools.build.lib.events.OutputFilter;
 import com.google.devtools.build.lib.exec.BinTools;
+import com.google.devtools.build.lib.jni.JniLoader;
 import com.google.devtools.build.lib.packages.Package.Builder.DefaultPackageSettings;
 import com.google.devtools.build.lib.packages.Package.Builder.PackageSettings;
 import com.google.devtools.build.lib.packages.PackageFactory;
@@ -72,7 +75,6 @@ import com.google.devtools.build.lib.server.CommandProtos.EnvironmentVariable;
 import com.google.devtools.build.lib.server.CommandProtos.ExecRequest;
 import com.google.devtools.build.lib.server.FailureDetails.FailureDetail;
 import com.google.devtools.build.lib.server.FailureDetails.Filesystem;
-import com.google.devtools.build.lib.server.FailureDetails.Interrupted.Code;
 import com.google.devtools.build.lib.server.GrpcServerImpl;
 import com.google.devtools.build.lib.server.PidFileWatcher;
 import com.google.devtools.build.lib.server.RPCServer;
@@ -82,7 +84,6 @@ import com.google.devtools.build.lib.shell.JavaSubprocessFactory;
 import com.google.devtools.build.lib.shell.SubprocessBuilder;
 import com.google.devtools.build.lib.shell.SubprocessFactory;
 import com.google.devtools.build.lib.util.AbruptExitException;
-import com.google.devtools.build.lib.util.CrashFailureDetails;
 import com.google.devtools.build.lib.util.CustomExitCodePublisher;
 import com.google.devtools.build.lib.util.CustomFailureDetailPublisher;
 import com.google.devtools.build.lib.util.DebugLoggerConfigurator;
@@ -152,7 +153,7 @@ public final class BlazeRuntime implements BugReport.BlazeRuntimeInterface {
   private static final GoogleLogger logger = GoogleLogger.forEnclosingClass();
 
   private final FileSystem fileSystem;
-  private final Iterable<BlazeModule> blazeModules;
+  private final ImmutableList<BlazeModule> blazeModules;
   private final Map<String, BlazeCommand> commandMap = new LinkedHashMap<>();
   private final Clock clock;
   private final Runnable abruptShutdownHandler;
@@ -180,7 +181,7 @@ public final class BlazeRuntime implements BugReport.BlazeRuntimeInterface {
   private final BuildEventArtifactUploaderFactoryMap buildEventArtifactUploaderFactoryMap;
   private final ActionKeyContext actionKeyContext;
   private final ImmutableMap<String, AuthHeadersProvider> authHeadersProviderMap;
-  private final RetainedHeapLimiter retainedHeapLimiter = new RetainedHeapLimiter();
+  private final RetainedHeapLimiter retainedHeapLimiter;
   @Nullable private final RepositoryRemoteExecutorFactory repositoryRemoteExecutorFactory;
   private final Supplier<Downloader> downloaderSupplier;
 
@@ -199,7 +200,7 @@ public final class BlazeRuntime implements BugReport.BlazeRuntimeInterface {
       Clock clock,
       Runnable abruptShutdownHandler,
       OptionsParsingResult startupOptionsProvider,
-      Iterable<BlazeModule> blazeModules,
+      ImmutableList<BlazeModule> blazeModules,
       SubscriberExceptionHandler eventBusExceptionHandler,
       BugReporter bugReporter,
       ProjectFile.Provider projectFileProvider,
@@ -232,6 +233,7 @@ public final class BlazeRuntime implements BugReport.BlazeRuntimeInterface {
     this.queryOutputFormatters = queryOutputFormatters;
     this.eventBusExceptionHandler = eventBusExceptionHandler;
     this.bugReporter = bugReporter;
+    retainedHeapLimiter = RetainedHeapLimiter.create(bugReporter);
 
     CommandNameCache.CommandNameCacheInstance.INSTANCE.setCommandNameCache(
         new CommandNameCacheImpl(getCommandMap()));
@@ -335,7 +337,7 @@ public final class BlazeRuntime implements BugReport.BlazeRuntimeInterface {
           if (format == Format.JSON_TRACE_FILE_COMPRESSED_FORMAT) {
             profileName = "command.profile.gz";
           }
-          if (bepOptions.streamingLogFileUploads) {
+          if (bepOptions != null && bepOptions.streamingLogFileUploads) {
             BuildEventArtifactUploader buildEventArtifactUploader =
                 newUploader(env, bepOptions.buildEventUploadStrategy);
             streamingContext = buildEventArtifactUploader.startUpload(LocalFileType.LOG, null);
@@ -559,6 +561,7 @@ public final class BlazeRuntime implements BugReport.BlazeRuntimeInterface {
 
   @Override
   public void cleanUpForCrash(DetailedExitCode exitCode) {
+    logger.atInfo().log("Cleaning up in crash: %s", exitCode);
     if (declareExitCode(exitCode)) {
       // Only try to publish events if we won the exit code race. Otherwise someone else is already
       // exiting for us.
@@ -582,7 +585,7 @@ public final class BlazeRuntime implements BugReport.BlazeRuntimeInterface {
     // We don't call #shutDown() here because all it does is shut down the modules, and who knows if
     // they can be trusted.  Instead, we call runtime#shutdownOnCrash() which attempts to cleanly
     // shut down those modules that might have something pending to do as a best-effort operation.
-    shutDownModulesOnCrash();
+    shutDownModulesOnCrash(exitCode);
   }
 
   private boolean declareExitCode(DetailedExitCode detailedExitCode) {
@@ -649,8 +652,7 @@ public final class BlazeRuntime implements BugReport.BlazeRuntimeInterface {
       logger.atInfo().withCause(e).log("Interrupted in afterCommand");
       afterCommandResult =
           BlazeCommandResult.detailedExitCode(
-              InterruptedFailureDetails.detailedExitCode(
-                  "executor completion interrupted", Code.EXECUTOR_COMPLETION));
+              InterruptedFailureDetails.detailedExitCode("executor completion interrupted"));
       Thread.currentThread().interrupt();
     }
 
@@ -673,14 +675,8 @@ public final class BlazeRuntime implements BugReport.BlazeRuntimeInterface {
       }
     }
 
-    try {
-      Profiler.instance().stop();
-      MemoryProfiler.instance().stop();
-    } catch (IOException e) {
-      env.getReporter().handle(Event.error("Error while writing profile file: " + e.getMessage()));
-    }
-
     env.getReporter().clearEventBus();
+    retainedHeapLimiter.resetEventHandler();
     actionKeyContext.clear();
     DebugLoggerConfigurator.flushServerLog();
     storedExitCode.set(null);
@@ -734,11 +730,14 @@ public final class BlazeRuntime implements BugReport.BlazeRuntimeInterface {
     }
   }
 
-  /** Invokes {@link BlazeModule#blazeShutdownOnCrash()} on all registered modules. */
-  private void shutDownModulesOnCrash() {
+  /** Invokes {@link BlazeModule#blazeShutdownOnCrash} on all registered modules. */
+  private void shutDownModulesOnCrash(DetailedExitCode exitCode) {
+    // TODO(b/167592709): remove verbose logging when bug resolved.
+    logger.atInfo().log("Shutting down modules on crash: %s", blazeModules);
     try {
       for (BlazeModule module : blazeModules) {
-        module.blazeShutdownOnCrash();
+        logger.atInfo().log("Shutting down %s on crash", module);
+        module.blazeShutdownOnCrash(exitCode);
       }
     } finally {
       DebugLoggerConfigurator.flushServerLog();
@@ -768,11 +767,9 @@ public final class BlazeRuntime implements BugReport.BlazeRuntimeInterface {
       // Run Blaze in server mode.
       System.exit(serverMain(modules, OutErr.SYSTEM_OUT_ERR, args));
     } catch (RuntimeException | Error e) { // A definite bug...
-      BugReport.printBug(OutErr.SYSTEM_OUT_ERR, e, /* oomMessage = */ null);
-      BugReport.sendBugReport(e, Arrays.asList(args));
-      CustomFailureDetailPublisher.maybeWriteFailureDetailFile(CrashFailureDetails.forThrowable(e));
-      System.exit(ExitCode.BLAZE_INTERNAL_ERROR.getNumericExitCode());
-      throw e; // Shouldn't get here.
+      Crash crash = Crash.from(e);
+      BugReport.handleCrash(crash, CrashContext.keepAlive().withArgs(args));
+      System.exit(crash.getDetailedExitCode().getExitCode().getNumericExitCode());
     }
   }
 
@@ -1069,7 +1066,7 @@ public final class BlazeRuntime implements BugReport.BlazeRuntimeInterface {
   }
 
   private static SubprocessFactory subprocessFactoryImplementation() {
-    if (!"0".equals(System.getProperty("io.bazel.EnableJni")) && OS.getCurrent() == OS.WINDOWS) {
+    if (JniLoader.isJniAvailable() && OS.getCurrent() == OS.WINDOWS) {
       return WindowsSubprocessFactory.INSTANCE;
     } else {
       return JavaSubprocessFactory.INSTANCE;
@@ -1281,7 +1278,6 @@ public final class BlazeRuntime implements BugReport.BlazeRuntimeInterface {
     } catch (IOException e) {
       throw createFilesystemExitException(
           "Cannot enumerate embedded binaries: " + e.getMessage(),
-          ExitCode.LOCAL_ENVIRONMENTAL_ERROR,
           Filesystem.Code.EMBEDDED_BINARIES_ENUMERATION_FAILURE,
           e);
     }
@@ -1291,10 +1287,9 @@ public final class BlazeRuntime implements BugReport.BlazeRuntimeInterface {
   }
 
   private static AbruptExitException createFilesystemExitException(
-      String message, ExitCode exitCode, Filesystem.Code detailedCode, Exception e) {
+      String message, Filesystem.Code detailedCode, Exception e) {
     return new AbruptExitException(
         DetailedExitCode.of(
-            exitCode,
             FailureDetail.newBuilder()
                 .setMessage(message)
                 .setFilesystem(Filesystem.newBuilder().setCode(detailedCode))
@@ -1310,11 +1305,7 @@ public final class BlazeRuntime implements BugReport.BlazeRuntimeInterface {
   /** Loads JNI libraries, if necessary under the current platform. */
   @Nullable
   private static Integer maybeForceJNIByGettingPid(@Nullable PathFragment installBase) {
-    return jniLibsAvailable() ? getPidUsingJNI(installBase) : null;
-  }
-
-  private static boolean jniLibsAvailable() {
-    return !"0".equals(System.getProperty("io.bazel.EnableJni"));
+    return JniLoader.isJniAvailable() ? getPidUsingJNI(installBase) : null;
   }
 
   // Force JNI linking at a moment when we have 'installBase' handy, and print
@@ -1646,14 +1637,12 @@ public final class BlazeRuntime implements BugReport.BlazeRuntimeInterface {
     } catch (IOException e) {
       throw createFilesystemExitException(
           "Server pid file read failed: " + e.getMessage(),
-          ExitCode.BUILD_FAILURE,
           Filesystem.Code.SERVER_PID_TXT_FILE_READ_FAILURE,
           e);
     } catch (NumberFormatException e) {
       // Invalid contents (not a number) is more likely than not a filesystem issue.
       throw createFilesystemExitException(
           "Server pid file corrupted: " + e.getMessage(),
-          ExitCode.BUILD_FAILURE,
           Filesystem.Code.SERVER_PID_TXT_FILE_READ_FAILURE,
           new IOException(e));
     }

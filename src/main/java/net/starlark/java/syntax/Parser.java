@@ -481,6 +481,10 @@ final class Parser {
     ImmutableList.Builder<Argument> list = ImmutableList.builder();
     while (token.kind != TokenKind.RPAREN && token.kind != TokenKind.EOF) {
       if (seenArg) {
+        // f(expr for vars in expr) -- Python generator expression?
+        if (token.kind == TokenKind.FOR) {
+          syntaxError("Starlark does not support Python-style generator expressions");
+        }
         expect(TokenKind.COMMA);
         // If nonempty, the list may end with a comma.
         if (token.kind == TokenKind.RPAREN) {
@@ -560,7 +564,8 @@ final class Parser {
     return literal;
   }
 
-  //  primary = INTEGER
+  //  primary = INT
+  //          | FLOAT
   //          | STRING
   //          | IDENTIFIER
   //          | list_expression
@@ -572,8 +577,15 @@ final class Parser {
     switch (token.kind) {
       case INT:
         {
-          IntegerLiteral literal =
-              new IntegerLiteral(locs, token.raw, token.start, (Integer) token.value);
+          IntLiteral literal = new IntLiteral(locs, token.raw, token.start, (Number) token.value);
+          nextToken();
+          return literal;
+        }
+
+      case FLOAT:
+        {
+          FloatLiteral literal =
+              new FloatLiteral(locs, token.raw, token.start, (double) token.value);
           nextToken();
           return literal;
         }
@@ -617,6 +629,11 @@ final class Parser {
             parseExprList(elems, /*trailingCommaAllowed=*/ true);
             int rparenOffset = expect(TokenKind.RPAREN);
             return new ListExpression(locs, /*isTuple=*/ true, lparenOffset, elems, rparenOffset);
+          }
+
+          // (expr for vars in expr) -- Python generator expression?
+          if (token.kind == TokenKind.FOR) {
+            syntaxError("Starlark does not support Python-style generator expressions");
           }
 
           expect(TokenKind.RPAREN);

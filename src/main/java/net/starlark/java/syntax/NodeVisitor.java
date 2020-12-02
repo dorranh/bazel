@@ -110,7 +110,9 @@ public class NodeVisitor {
     visitAll(node.getElements());
   }
 
-  public void visit(@SuppressWarnings("unused") IntegerLiteral node) {}
+  public void visit(@SuppressWarnings("unused") IntLiteral node) {}
+
+  public void visit(@SuppressWarnings("unused") FloatLiteral node) {}
 
   public void visit(@SuppressWarnings("unused") StringLiteral node) {}
 

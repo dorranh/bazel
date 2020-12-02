@@ -21,6 +21,7 @@ import com.google.devtools.build.lib.analysis.starlark.StarlarkActionFactory;
 import com.google.devtools.build.lib.analysis.starlark.StarlarkRuleContext;
 import com.google.devtools.build.lib.rules.cpp.CcCompilationContext;
 import com.google.devtools.build.lib.rules.cpp.CcCompilationOutputs;
+import com.google.devtools.build.lib.rules.cpp.CcDebugInfoContext;
 import com.google.devtools.build.lib.rules.cpp.CcLinkingContext;
 import com.google.devtools.build.lib.rules.cpp.CcLinkingContext.LinkerInput;
 import com.google.devtools.build.lib.rules.cpp.CcLinkingOutputs;
@@ -28,12 +29,14 @@ import com.google.devtools.build.lib.rules.cpp.CcModule;
 import com.google.devtools.build.lib.rules.cpp.CcToolchainConfigInfo;
 import com.google.devtools.build.lib.rules.cpp.CcToolchainProvider;
 import com.google.devtools.build.lib.rules.cpp.CcToolchainVariables;
+import com.google.devtools.build.lib.rules.cpp.CppModuleMap;
 import com.google.devtools.build.lib.rules.cpp.CppSemantics;
 import com.google.devtools.build.lib.rules.cpp.FeatureConfigurationForStarlark;
 import com.google.devtools.build.lib.rules.cpp.LibraryToLink;
 import com.google.devtools.build.lib.starlarkbuildapi.cpp.BazelCcModuleApi;
 import net.starlark.java.eval.EvalException;
 import net.starlark.java.eval.Sequence;
+import net.starlark.java.eval.StarlarkInt;
 import net.starlark.java.eval.StarlarkList;
 import net.starlark.java.eval.StarlarkThread;
 import net.starlark.java.eval.Tuple;
@@ -59,7 +62,9 @@ public class BazelCcModule extends CcModule
         LibraryToLink,
         CcLinkingContext,
         CcToolchainVariables,
-        CcToolchainConfigInfo> {
+        CcToolchainConfigInfo,
+        CcDebugInfoContext,
+        CppModuleMap> {
 
   @Override
   public CppSemantics getSemantics() {
@@ -67,7 +72,7 @@ public class BazelCcModule extends CcModule
   }
 
   @Override
-  public Tuple<Object> compile(
+  public Tuple compile(
       StarlarkActionFactory starlarkActionFactoryApi,
       FeatureConfigurationForStarlark starlarkFeatureConfiguration,
       CcToolchainProvider starlarkCcToolchainProvider,
@@ -88,6 +93,8 @@ public class BazelCcModule extends CcModule
       boolean disallowPicOutputs,
       boolean disallowNopicOutputs,
       Sequence<?> additionalInputs, // <Artifact> expected
+      Object moduleMap,
+      Object additionalModuleMaps,
       StarlarkThread thread)
       throws EvalException, InterruptedException {
     return compile(
@@ -114,6 +121,8 @@ public class BazelCcModule extends CcModule
         /* headersForClifDoNotUseThisParam= */ ImmutableList.of(),
         StarlarkList.immutableCopyOf(
             Sequence.cast(additionalInputs, Artifact.class, "additional_inputs")),
+        moduleMap,
+        additionalModuleMaps,
         thread);
   }
 
@@ -129,7 +138,7 @@ public class BazelCcModule extends CcModule
       String language,
       String outputType,
       boolean linkDepsStatically,
-      int stamp,
+      StarlarkInt stamp,
       Sequence<?> additionalInputs, // <Artifact> expected
       Object grepIncludes,
       StarlarkThread thread)

@@ -157,15 +157,15 @@ public class AspectDefinitionTest {
             .build();
     AdvertisedProviderSet expectedOkSet =
         AdvertisedProviderSet.builder()
-            .addNative(P1.class)
-            .addNative(P2.class)
-            .addNative(P3.class)
+            .addBuiltin(P1.class)
+            .addBuiltin(P2.class)
+            .addBuiltin(P3.class)
             .build();
     assertThat(requiresProviders.getRequiredProviders().isSatisfiedBy(expectedOkSet))
         .isTrue();
 
     AdvertisedProviderSet expectedFailSet =
-        AdvertisedProviderSet.builder().addNative(P1.class).build();
+        AdvertisedProviderSet.builder().addBuiltin(P1.class).build();
     assertThat(requiresProviders.getRequiredProviders().isSatisfiedBy(expectedFailSet))
         .isFalse();
 
@@ -184,13 +184,13 @@ public class AspectDefinitionTest {
             .build();
 
     AdvertisedProviderSet expectedOkSet1 =
-        AdvertisedProviderSet.builder().addNative(P1.class).addNative(P2.class).build();
+        AdvertisedProviderSet.builder().addBuiltin(P1.class).addBuiltin(P2.class).build();
 
     AdvertisedProviderSet expectedOkSet2 =
-        AdvertisedProviderSet.builder().addNative(P3.class).build();
+        AdvertisedProviderSet.builder().addBuiltin(P3.class).build();
 
     AdvertisedProviderSet expectedFailSet =
-        AdvertisedProviderSet.builder().addNative(P4.class).build();
+        AdvertisedProviderSet.builder().addBuiltin(P4.class).build();
 
    assertThat(requiresProviders.getRequiredProviders().isSatisfiedBy(AdvertisedProviderSet.ANY))
        .isTrue();
@@ -208,7 +208,7 @@ public class AspectDefinitionTest {
         .build();
 
     AdvertisedProviderSet expectedFailSet =
-        AdvertisedProviderSet.builder().addNative(P4.class).build();
+        AdvertisedProviderSet.builder().addBuiltin(P4.class).build();
 
     assertThat(noAspects.getRequiredProvidersForAspects().isSatisfiedBy(AdvertisedProviderSet.ANY))
         .isFalse();
@@ -228,16 +228,6 @@ public class AspectDefinitionTest {
   }
 
   @Test
-  public void testMissingFragmentPolicy_propagatedToConfigurationFragmentPolicy() throws Exception {
-    AspectDefinition missingFragments = new AspectDefinition.Builder(TEST_ASPECT_CLASS)
-        .setMissingFragmentPolicy(MissingFragmentPolicy.IGNORE)
-        .build();
-    assertThat(missingFragments.getConfigurationFragmentPolicy()).isNotNull();
-    assertThat(missingFragments.getConfigurationFragmentPolicy().getMissingFragmentPolicy())
-        .isEqualTo(MissingFragmentPolicy.IGNORE);
-  }
-
-  @Test
   public void testRequiresConfigurationFragments_propagatedToConfigurationFragmentPolicy()
       throws Exception {
     AspectDefinition requiresFragments = new AspectDefinition.Builder(TEST_ASPECT_CLASS)
@@ -252,6 +242,20 @@ public class AspectDefinitionTest {
   private static class FooFragment extends Fragment {}
 
   private static class BarFragment extends Fragment {}
+
+  @Test
+  public void testMissingFragmentPolicy_propagatedToConfigurationFragmentPolicy() throws Exception {
+    AspectDefinition missingFragments =
+        new AspectDefinition.Builder(TEST_ASPECT_CLASS)
+            .setMissingFragmentPolicy(FooFragment.class, MissingFragmentPolicy.IGNORE)
+            .build();
+    assertThat(missingFragments.getConfigurationFragmentPolicy()).isNotNull();
+    assertThat(
+            missingFragments
+                .getConfigurationFragmentPolicy()
+                .getMissingFragmentPolicy(FooFragment.class))
+        .isEqualTo(MissingFragmentPolicy.IGNORE);
+  }
 
   @Test
   public void testRequiresHostConfigurationFragments_propagatedToConfigurationFragmentPolicy()

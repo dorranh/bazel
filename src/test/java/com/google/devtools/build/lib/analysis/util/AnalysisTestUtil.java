@@ -104,7 +104,7 @@ public final class AnalysisTestUtil {
     }
 
     /** Calls {@link MutableActionGraph#registerAction} for all collected actions. */
-    public void registerWith(MutableActionGraph actionGraph) {
+    public void registerWith(MutableActionGraph actionGraph) throws InterruptedException {
       for (ActionAnalysisMetadata action : actions) {
         try {
           actionGraph.registerAction(action);
@@ -233,7 +233,8 @@ public final class AnalysisTestUtil {
       super(
           ActionOwner.SYSTEM_ACTION_OWNER,
           NestedSetBuilder.emptySet(Order.STABLE_ORDER),
-          ImmutableSet.of(stableStatus, volatileStatus));
+          ImmutableSet.of(stableStatus, volatileStatus),
+          "workspace status");
       this.stableStatus = stableStatus;
       this.volatileStatus = volatileStatus;
     }
@@ -506,7 +507,7 @@ public final class AnalysisTestUtil {
     for (Artifact artifact : artifacts) {
       ArtifactRoot root = artifact.getRoot();
       if (root.isSourceRoot()) {
-        files.add("src " + artifact.getRootRelativePath());
+        files.add("src " + artifact.getExecPath());
       } else {
         String name = rootMap.getOrDefault(root.getRoot().toString(), "/");
         files.add(name + " " + artifact.getRootRelativePath());

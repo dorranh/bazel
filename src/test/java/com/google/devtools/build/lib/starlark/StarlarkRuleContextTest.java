@@ -52,7 +52,6 @@ import com.google.devtools.build.lib.rules.java.JavaInfo;
 import com.google.devtools.build.lib.rules.java.JavaSourceJarsProvider;
 import com.google.devtools.build.lib.rules.python.PyProviderUtils;
 import com.google.devtools.build.lib.starlark.util.BazelEvaluationTestCase;
-import com.google.devtools.build.lib.syntax.util.EvaluationTestCase;
 import com.google.devtools.build.lib.testutil.TestRuleClassProvider;
 import com.google.devtools.build.lib.util.FileTypeSet;
 import com.google.devtools.build.lib.vfs.FileSystemUtils;
@@ -62,9 +61,9 @@ import java.util.List;
 import java.util.Map;
 import net.starlark.java.eval.Dict;
 import net.starlark.java.eval.EvalException;
-import net.starlark.java.eval.Mutability;
 import net.starlark.java.eval.Sequence;
 import net.starlark.java.eval.Starlark;
+import net.starlark.java.eval.StarlarkInt;
 import net.starlark.java.eval.StarlarkList;
 import org.junit.Before;
 import org.junit.Test;
@@ -80,7 +79,7 @@ public final class StarlarkRuleContextTest extends BuildViewTestCase {
         getRuleContextForStarlark(getConfiguredTarget(label)), null, getStarlarkSemantics());
   }
 
-  private final EvaluationTestCase ev = new BazelEvaluationTestCase();
+  private final BazelEvaluationTestCase ev = new BazelEvaluationTestCase();
 
   /** A test rule that exercises the semantics of mandatory providers. */
   private static final MockRule TESTING_RULE_FOR_MANDATORY_PROVIDERS =
@@ -633,6 +632,7 @@ public final class StarlarkRuleContextTest extends BuildViewTestCase {
             "generator_location",
             "features",
             "compatible_with",
+            "target_compatible_with",
             "restricted_to",
             "srcs",
             "tools",
@@ -2042,7 +2042,7 @@ public final class StarlarkRuleContextTest extends BuildViewTestCase {
     Object argvUnchecked = ev.eval("action.argv");
     assertThat(argvUnchecked).isInstanceOf(StarlarkList.class);
     StarlarkList<?> argv = (StarlarkList) argvUnchecked;
-    assertThat(argv).hasSize(3);
+    assertThat((List<?>) argv).hasSize(3);
     assertThat(argv.isImmutable()).isTrue();
     Object result = ev.eval("action.argv[2].startswith('echo foo123')");
     assertThat((Boolean) result).isTrue();
@@ -2311,7 +2311,7 @@ public final class StarlarkRuleContextTest extends BuildViewTestCase {
 
     Object substitutionsUnchecked = ev.eval("action.substitutions");
     assertThat(substitutionsUnchecked).isInstanceOf(Dict.class);
-    assertThat(substitutionsUnchecked).isEqualTo(Dict.of((Mutability) null, "a", "b"));
+    assertThat(substitutionsUnchecked).isEqualTo(ImmutableMap.of("a", "b"));
   }
 
   private void setUpCoverageInstrumentedTest() throws Exception {
@@ -2421,6 +2421,7 @@ public final class StarlarkRuleContextTest extends BuildViewTestCase {
           "actions.run_shell(command = 'foo', outputs = [file])",
           "actions.write(file, 'foo')",
           "check_placeholders('foo', [])",
+          "build_file_path",
           "runfiles()",
           "resolve_command(command = 'foo')",
           "resolve_tools()");
@@ -2615,7 +2616,7 @@ public final class StarlarkRuleContextTest extends BuildViewTestCase {
             "BuildSettingInfo");
     StructImpl buildSettingInfo = (StructImpl) buildSetting.get(key);
 
-    assertThat(buildSettingInfo.getValue("value")).isEqualTo(24);
+    assertThat(buildSettingInfo.getValue("value")).isEqualTo(StarlarkInt.of(24));
   }
 
   @Test
@@ -2629,7 +2630,7 @@ public final class StarlarkRuleContextTest extends BuildViewTestCase {
             "BuildSettingInfo");
     StructImpl buildSettingInfo = (StructImpl) buildSetting.get(key);
 
-    assertThat(buildSettingInfo.getValue("value")).isEqualTo(42);
+    assertThat(buildSettingInfo.getValue("value")).isEqualTo(StarlarkInt.of(42));
   }
 
   @Test
@@ -2994,5 +2995,24 @@ public final class StarlarkRuleContextTest extends BuildViewTestCase {
 
     assertThrows(AssertionError.class, () -> getConfiguredTarget("//something:nectarine"));
     assertContainsEvent("Exec group name '" + badName + "' is not a valid name.");
+  }
+
+  @Test
+  public void testBuildFilePath() throws Exception {
+    scratch.file("/foo/WORKSPACE");
+    scratch.file("/foo/bar/BUILD", "genrule(name = 'baz', cmd = 'dummy_cmd', outs = ['a.txt'])");
+
+    scratch.overwriteFile(
+        "WORKSPACE",
+        new ImmutableList.Builder<String>()
+            .addAll(analysisMock.getWorkspaceContents(mockToolsConfig))
+            .add("local_repository(name='foo', path='/foo')")
+            .build());
+
+    invalidatePackages(false);
+
+    setRuleContext(createRuleContext("@foo//bar:baz"));
+    Object result = ev.eval("ruleContext.build_file_path");
+    assertThat(result).isEqualTo("bar/BUILD");
   }
 }
